@@ -9,6 +9,7 @@
 # Zig
 /zig-out/
 /.zig-cache/
+/zig-pkg/
 
 # spec files
 analysis.txt
