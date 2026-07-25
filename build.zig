@@ -11,6 +11,7 @@
 const std = @import("std");
 const sources = @import("zig/sources.zig");
 const wad_data = @import("zig/wad_data.zig");
+const libzip = @import("zig/deps/libzip.zig");
 
 const version = "0.29.4";
 const project_name = "dsda-doom";
@@ -271,20 +272,29 @@ fn linkDependencies(
         "sdl2", "SDL2_mixer", "sndfile",
     }) catch @panic("OOM");
 
-    // Vendored by default; `-fsys=zlib` falls back to the system copy.
+    // Vendored by default; `-fsys=<name>` falls back to the system copy.
     const dep_args = .{ .target = target, .optimize = optimize };
-    if (b.systemIntegrationOption("zlib", .{ .default = false })) {
+
+    const sys_zlib = b.systemIntegrationOption("zlib", .{ .default = false });
+    const sys_libzip = b.systemIntegrationOption("libzip", .{ .default = false });
+
+    // libzip needs zlib as a library artifact, so resolve zlib first and reuse
+    // it for both. If zlib is system-provided we can't hand an artifact to the
+    // libzip build, so libzip has to come from the system too.
+    var zlib_lib: ?*std.Build.Step.Compile = null;
+    if (sys_zlib) {
         packages.append(b.allocator, "zlib") catch @panic("OOM");
     } else {
-        mod.linkLibrary(b.dependency("zlib", dep_args).artifact("z"));
+        zlib_lib = b.dependency("zlib", dep_args).artifact("z");
+        mod.linkLibrary(zlib_lib.?);
     }
 
-    // Still system-only. allyourcodebase/libzip cannot be used on Zig 0.16:
-    // it pins zlib 1.3.1, whose manifest predates the enum-literal .name
-    // syntax, so resolving it fails with "expected enum literal". The package
-    // is a single commit from 2025-07 with no newer branch, so this needs an
-    // in-tree build script over upstream libzip rather than a version bump.
-    packages.append(b.allocator, "libzip") catch @panic("OOM");
+    if (sys_libzip or zlib_lib == null) {
+        packages.append(b.allocator, "libzip") catch @panic("OOM");
+    } else {
+        const upstream = b.dependency("libzip_upstream", .{});
+        mod.linkLibrary(libzip.build(b, upstream, target, optimize, zlib_lib.?));
+    }
 
     // The optional backends' .c files are always compiled -- they self-stub via
     // #ifdef -- so only the link and the HAVE_LIB* define are conditional.
