@@ -244,14 +244,23 @@ pub fn build(b: *std.Build) void {
     // vendored library can still pass all 1105 demos.
     const check_deps = b.step("check-deps", "Smoke-test vendored dependencies");
     if (vendored.any()) {
-        const checker = b.addExecutable(.{
-            .name = "check_deps",
-            .root_module = b.createModule(.{
-                .root_source_file = b.path("zig/tools/check_deps.zig"),
-                .target = target,
-                .optimize = optimize,
-            }),
+        // Tells check_deps which libraries are linked, so its extern
+        // declarations stay behind comptime-false branches otherwise.
+        const avail = b.addOptions();
+        avail.addOption(bool, "vorbis", vendored.vorbisfile != null);
+        avail.addOption(bool, "mad", vendored.mad != null);
+        avail.addOption(bool, "xmp", vendored.xmp != null);
+        avail.addOption(bool, "portmidi", vendored.portmidi != null);
+        avail.addOption(bool, "fluidsynth", vendored.fluidsynth != null);
+        avail.addOption(bool, "sndfile", vendored.sndfile != null);
+
+        const checker_mod = b.createModule(.{
+            .root_source_file = b.path("zig/tools/check_deps.zig"),
+            .target = target,
+            .optimize = optimize,
         });
+        checker_mod.addOptions("check_deps_options", avail);
+        const checker = b.addExecutable(.{ .name = "check_deps", .root_module = checker_mod });
         const run_checks = b.addRunArtifact(checker);
         if (vendored.vorbisfile) |lib| {
             checker.root_module.linkLibrary(lib);
