@@ -380,6 +380,12 @@ fn linkDependencies(
         } else {
             vendored.vorbisfile = vorbis_lib;
             mod.linkLibrary(vorbis_lib);
+            // vorbis/codec.h includes <ogg/ogg.h>, and library include trees
+            // are not propagated transitively, so ogg has to be linked here
+            // too. Without this the build only works when some other
+            // pkg-config dependency happens to add a prefix that also
+            // contains ogg's headers.
+            mod.linkLibrary(ogg_lib);
         }
     }
 
@@ -473,6 +479,10 @@ fn linkDependencies(
 /// ("duplicate linked dylib") and the binary will not start. Passing all the
 /// package names to pkg-config at once makes pkg-config do the deduplication.
 fn addPkgConfig(b: *std.Build, mod: *std.Build.Module, packages: []const []const u8) void {
+    // Everything is vendored: nothing to ask pkg-config about, and invoking it
+    // with no package names is an error rather than a no-op.
+    if (packages.len == 0) return;
+
     // pkg-config only knows about the host. When cross-compiling it happily
     // returns host include and library paths, which would silently produce a
     // binary linked against the wrong architecture's libraries. Fail loudly
