@@ -558,6 +558,15 @@ void D_Display (fixed_t frac)
   I_EndDisplay();
 }
 
+// Every caller of the draw phase goes through here rather than D_Display
+// directly. Nothing is dispatched yet -- this is the seam the render thread
+// plugs into once the frame's GL calls are recorded rather than issued, which
+// they have to be: the context cannot come back to this thread mid-frame.
+void D_DisplayFrame(fixed_t frac)
+{
+  D_Display(frac);
+}
+
 //
 //  D_DoomLoop()
 //
@@ -673,7 +682,7 @@ static void D_DoomLoop(void)
             I_QueueFrameCapture();
           }
 
-          D_Display(cap_frac);
+          D_DisplayFrame(cap_frac);
 
           isExtraDDisplay = false;
           cap_frac += cap_step;
@@ -682,7 +691,7 @@ static void D_DoomLoop(void)
       }
       else
       {
-        D_Display(-1);
+        D_DisplayFrame(-1);
       }
     }
   }

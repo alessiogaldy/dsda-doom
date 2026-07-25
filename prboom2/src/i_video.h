@@ -111,4 +111,21 @@ void UpdateGrab(void);
 void I_SetWindowRect(void);
 void I_SetViewportRect(void);
 
+/* Render thread.
+ *
+ * In OpenGL mode the GL context lives on a dedicated thread; I_RenderDispatch
+ * runs a job there and I_RenderFlush waits for it. Outside OpenGL mode, and if
+ * the thread could not be created, jobs run inline and the rest are no-ops.
+ *
+ * I_GLAcquire / I_GLRelease borrow the context back onto the main thread. Every
+ * GL call made outside a dispatched job must sit between them.
+ */
+void I_StartRenderThread(void);
+void I_StopRenderThread(void);
+dboolean I_RenderThreadActive(void);
+void I_RenderDispatch(void (*fn)(void));
+void I_RenderFlush(void);
+void I_GLAcquire(void);
+void I_GLRelease(void);
+
 #endif

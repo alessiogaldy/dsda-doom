@@ -129,6 +129,192 @@ SDL_Rect renderer_rect = { 0, 0, 0, 0 };  // The window, but with HiDPI accounte
 SDL_Rect viewport_rect = { 0, 0, 0, 0 };  // The renderer, but without the black bars
 
 ////////////////////////////////////////////////////////////////////////////
+// Render thread
+//
+// A GL context may be current on one thread at a time, so moving any drawing
+// off the main thread means moving all of it. The context is handed to a
+// dedicated thread that does nothing else, and the main thread borrows it back
+// for the rare operations that touch GL outside a frame -- level load, texture
+// flushes, video mode changes.
+//
+// The main thread submits a job and, at present, immediately waits for it. That
+// wait is what a later change removes: once the frame's GL work no longer reads
+// anything the simulation is concurrently writing, the main thread can run the
+// next tic while this one draws.
+
+static SDL_Thread *render_thread;
+static SDL_sem *render_start;         // main -> render: a job is queued
+static SDL_sem *render_finished;      // render -> main: the job is done
+static void (*render_job)(void);
+static dboolean render_stopping;
+
+// Main-thread only. Jobs posted but not yet waited for; never more than a
+// handful, but a count rather than a flag keeps I_RenderFlush idempotent.
+static int render_pending;
+static int gl_borrow_depth;
+static dboolean render_thread_wanted;
+static SDL_threadID render_thread_id;
+
+// True when the caller already has the context, so borrowing it is a no-op.
+// The bracket sits inside the GL functions rather than at their call sites,
+// which means it is reached both from the main thread and from inside a
+// dispatched job; without this the latter would post a job to itself.
+static dboolean I_OnRenderThread(void)
+{
+  return render_thread && SDL_ThreadID() == render_thread_id;
+}
+
+static void I_RenderTakeContext(void)
+{
+  SDL_GL_MakeCurrent(sdl_window, sdl_glcontext);
+}
+
+static void I_RenderDropContext(void)
+{
+  SDL_GL_MakeCurrent(sdl_window, NULL);
+}
+
+static int I_RenderThread(void *unused)
+{
+  render_thread_id = SDL_ThreadID();
+
+  for (;;)
+  {
+    SDL_SemWait(render_start);
+
+    if (render_stopping)
+      break;
+
+    render_job();
+    SDL_SemPost(render_finished);
+  }
+
+  SDL_SemPost(render_finished);
+  return 0;
+}
+
+// Post a job without waiting for it. Any previously posted job is drained
+// first, so at most one is ever in flight.
+static void I_RenderPost(void (*fn)(void))
+{
+  I_RenderFlush();
+  render_job = fn;
+  render_pending++;
+  SDL_SemPost(render_start);
+}
+
+void I_RenderFlush(void)
+{
+  while (render_pending > 0)
+  {
+    SDL_SemWait(render_finished);
+    render_pending--;
+  }
+}
+
+void I_RenderDispatch(void (*fn)(void))
+{
+  if (!render_thread)
+  {
+    fn();
+    return;
+  }
+
+  I_RenderPost(fn);
+}
+
+// Take the context back onto the main thread for a non-frame GL operation.
+// Nests, because these call sites reach each other (a video mode change
+// reloads the level, which preprocesses textures).
+void I_GLAcquire(void)
+{
+  if (!render_thread || I_OnRenderThread() || gl_borrow_depth++)
+    return;
+
+  I_RenderPost(I_RenderDropContext);
+  I_RenderFlush();
+  SDL_GL_MakeCurrent(sdl_window, sdl_glcontext);
+}
+
+void I_GLRelease(void)
+{
+  if (!render_thread || I_OnRenderThread() || --gl_borrow_depth)
+    return;
+
+  SDL_GL_MakeCurrent(sdl_window, NULL);
+  I_RenderPost(I_RenderTakeContext);
+  I_RenderFlush();
+}
+
+dboolean I_RenderThreadActive(void)
+{
+  return render_thread != NULL;
+}
+
+void I_StartRenderThread(void)
+{
+  if (render_thread || !V_IsOpenGLMode())
+    return;
+
+  render_thread_wanted = true;
+  render_start = SDL_CreateSemaphore(0);
+  render_finished = SDL_CreateSemaphore(0);
+
+  if (!render_start || !render_finished)
+    I_Error("I_StartRenderThread: could not create semaphores: %s", SDL_GetError());
+
+  render_thread = SDL_CreateThread(I_RenderThread, "dsda-render", NULL);
+
+  if (!render_thread)
+  {
+    // Not fatal: without the thread every job runs inline on the main thread,
+    // which is what the build did before this existed.
+    lprintf(LO_WARN, "I_StartRenderThread: %s; drawing on the main thread\n",
+            SDL_GetError());
+    return;
+  }
+
+  // Hand the context over for good. It must not come back per frame:
+  // detaching a context on macOS lets the window server rotate the drawable,
+  // and gld_Clear only clears colour when it has to, so frames that inherit
+  // untouched back buffer pixels come out different. Verified -- a
+  // MakeCurrent(NULL)/MakeCurrent(ctx) pair around each swap moves five of the
+  // fourteen frame hashes whether or not a second thread is involved.
+  SDL_GL_MakeCurrent(sdl_window, NULL);
+  I_RenderPost(I_RenderTakeContext);
+  I_RenderFlush();
+}
+
+void I_StopRenderThread(void)
+{
+  if (!render_thread)
+    return;
+
+  // Reached from the error path, which can fire inside a job. Waiting here
+  // would be the render thread waiting on itself, turning any crash into a
+  // hang; leave the thread alone and let exit tear it down.
+  if (I_OnRenderThread())
+    return;
+
+  I_RenderFlush();
+  I_RenderPost(I_RenderDropContext);
+  I_RenderFlush();
+
+  render_stopping = true;
+  SDL_SemPost(render_start);
+  SDL_SemWait(render_finished);
+  SDL_WaitThread(render_thread, NULL);
+  render_thread = NULL;
+
+  SDL_DestroySemaphore(render_start);
+  SDL_DestroySemaphore(render_finished);
+  render_start = render_finished = NULL;
+  render_stopping = false;
+
+  SDL_GL_MakeCurrent(sdl_window, sdl_glcontext);
+}
+
+////////////////////////////////////////////////////////////////////////////
 // Input code
 int             leds_always_off = 0; // Expected by m_misc, not relevant
 
@@ -686,6 +872,8 @@ void I_SetPalette (int pal)
 
 static void I_ShutdownSDL(void)
 {
+  I_StopRenderThread();
+
   if (sdl_glcontext) SDL_GL_DeleteContext(sdl_glcontext);
   if (screen) SDL_FreeSurface(screen);
   if (buffer) SDL_FreeSurface(buffer);
@@ -1206,6 +1394,10 @@ void I_UpdateVideoMode(void)
 
   if(sdl_window)
   {
+    // The context is about to be destroyed, so it cannot stay on the render
+    // thread. Restarted at the end of this function, once the new one exists.
+    I_StopRenderThread();
+
     // video capturing cannot be continued with new screen settings
     I_CaptureFinish();
 
@@ -1439,6 +1631,11 @@ void I_UpdateVideoMode(void)
 
   src_rect.w = SCREENWIDTH;
   src_rect.h = SCREENHEIGHT;
+
+  // Only if it was already running: at startup this runs long before the main
+  // loop, and every GL call in between expects the context on this thread.
+  if (render_thread_wanted)
+    I_StartRenderThread();
 }
 
 static void ActivateMouse(void)

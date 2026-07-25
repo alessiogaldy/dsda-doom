@@ -62,6 +62,7 @@ void D_DoAdvanceDemo (void);
 //
 
 void D_Display(fixed_t frac);
+void D_DisplayFrame(fixed_t frac);
 void D_PageTicker(void);
 void D_StartTitle(void);
 void D_DoomMain(void);
