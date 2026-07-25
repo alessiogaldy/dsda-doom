@@ -49,6 +49,7 @@
 #include "m_bbox.h"
 #include "r_sky.h"
 #include "v_video.h"
+#include "gl_struct.h"
 #include "lprintf.h"
 #include "st_stuff.h"
 #include "i_main.h"
@@ -1099,6 +1100,12 @@ void R_RenderPlayerView (player_t* player)
   DSDA_ADD_CONTEXT(sf_bsp_nodes);
   R_RenderBSPNodes();
   DSDA_REMOVE_CONTEXT(sf_bsp_nodes);
+
+  // The BSP walk is the only thing that adds to the draw list, so the scene is
+  // complete here. Hand it to the draw phase, which from this point reads
+  // gld_drawinfo_ready and no longer shares a buffer with scene building.
+  if (V_IsOpenGLMode())
+    gld_PublishDrawInfo();
 
   FakeNetUpdate();
 

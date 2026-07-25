@@ -335,7 +335,9 @@ extern float pitch;
 
 extern int gl_preprocessed; //e6y
 
-extern GLDrawInfo gld_drawinfo;
+extern GLDrawInfo gld_drawinfo;       // being built by the BSP walk
+extern GLDrawInfo gld_drawinfo_ready; // published, being drawn
+void gld_PublishDrawInfo(void);
 void gld_FreeDrawInfo(void);
 void gld_ResetDrawInfo(void);
 

@@ -2149,7 +2149,7 @@ static void gld_DrawHealthBars(void)
   int i, count;
   int color = health_bar_null;
 
-  count = gld_drawinfo.num_items[GLDIT_HBAR];
+  count = gld_drawinfo_ready.num_items[GLDIT_HBAR];
   if (count > 0)
   {
     gld_EnableTexture2D(GL_TEXTURE0_ARB, false);
@@ -2157,7 +2157,7 @@ static void gld_DrawHealthBars(void)
     glBegin(GL_LINES);
     for (i = count - 1; i >= 0; i--)
     {
-      GLHealthBar *hbar = gld_drawinfo.items[GLDIT_HBAR][i].item.hbar;
+      GLHealthBar *hbar = gld_drawinfo_ready.items[GLDIT_HBAR][i].item.hbar;
       if (hbar->color != color)
       {
         color = hbar->color;
@@ -2175,7 +2175,7 @@ static void gld_DrawHealthBars(void)
     glBegin(GL_LINES);
     for (i = count - 1; i >= 0; i--)
     {
-      GLHealthBar *hbar = gld_drawinfo.items[GLDIT_HBAR][i].item.hbar;
+      GLHealthBar *hbar = gld_drawinfo_ready.items[GLDIT_HBAR][i].item.hbar;
 
       glVertex3f(hbar->x1, hbar->y, hbar->z1);
       glVertex3f(hbar->x3, hbar->y, hbar->z3);
@@ -2522,10 +2522,10 @@ static void gld_DrawItemsSortByTexture(GLDrawItemType itemtype)
     0,
   };
 
-  if (itemfuncs[itemtype] && gld_drawinfo.num_items[itemtype] > 1)
+  if (itemfuncs[itemtype] && gld_drawinfo_ready.num_items[itemtype] > 1)
   {
-    qsort(gld_drawinfo.items[itemtype], gld_drawinfo.num_items[itemtype],
-      sizeof(gld_drawinfo.items[itemtype][0]), itemfuncs[itemtype]);
+    qsort(gld_drawinfo_ready.items[itemtype], gld_drawinfo_ready.num_items[itemtype],
+      sizeof(gld_drawinfo_ready.items[itemtype][0]), itemfuncs[itemtype]);
   }
 }
 
@@ -2536,9 +2536,9 @@ static void gld_DrawItemsSortSprites(GLDrawItemType itemtype)
 
   if (scene_has_overlapped_sprites)
   {
-    for (i = 0; i < gld_drawinfo.num_items[itemtype]; i++)
+    for (i = 0; i < gld_drawinfo_ready.num_items[itemtype]; i++)
     {
-      GLSprite *sprite = gld_drawinfo.items[itemtype][i].item.sprite;
+      GLSprite *sprite = gld_drawinfo_ready.items[itemtype][i].item.sprite;
       if (sprite->flags & MF_FOREGROUND)
       {
         sprite->index = gl_spriteindex;
@@ -2558,7 +2558,7 @@ void gld_DrawProjectedWalls(GLDrawItemType itemtype)
 {
   int i;
 
-  if (gl_use_stencil && gld_drawinfo.num_items[itemtype] > 0)
+  if (gl_use_stencil && gld_drawinfo_ready.num_items[itemtype] > 0)
   {
     // Push bleeding floor/ceiling textures back a little in the z-buffer
     // so they don't interfere with overlapping mid textures.
@@ -2567,9 +2567,9 @@ void gld_DrawProjectedWalls(GLDrawItemType itemtype)
 
     glEnable(GL_STENCIL_TEST);
     gld_DrawItemsSortByTexture(itemtype);
-    for (i = gld_drawinfo.num_items[itemtype] - 1; i >= 0; i--)
+    for (i = gld_drawinfo_ready.num_items[itemtype] - 1; i >= 0; i--)
     {
-      GLWall *wall = gld_drawinfo.items[itemtype][i].item.wall;
+      GLWall *wall = gld_drawinfo_ready.items[itemtype][i].item.wall;
 
       gld_ProcessWall(wall);
     }
@@ -2619,17 +2619,17 @@ void gld_DrawScene(player_t *player)
   // floors
   glCullFace(GL_FRONT);
   gld_DrawItemsSortByTexture(GLDIT_FLOOR);
-  for (i = gld_drawinfo.num_items[GLDIT_FLOOR] - 1; i >= 0; i--)
+  for (i = gld_drawinfo_ready.num_items[GLDIT_FLOOR] - 1; i >= 0; i--)
   {
-    gld_DrawFlat(gld_drawinfo.items[GLDIT_FLOOR][i].item.flat);
+    gld_DrawFlat(gld_drawinfo_ready.items[GLDIT_FLOOR][i].item.flat);
   }
 
   // ceilings
   glCullFace(GL_BACK);
   gld_DrawItemsSortByTexture(GLDIT_CEILING);
-  for (i = gld_drawinfo.num_items[GLDIT_CEILING] - 1; i >= 0; i--)
+  for (i = gld_drawinfo_ready.num_items[GLDIT_CEILING] - 1; i >= 0; i--)
   {
-    gld_DrawFlat(gld_drawinfo.items[GLDIT_CEILING][i].item.flat);
+    gld_DrawFlat(gld_drawinfo_ready.items[GLDIT_CEILING][i].item.flat);
   }
 
   // disable backside removing
@@ -2637,9 +2637,9 @@ void gld_DrawScene(player_t *player)
 
   // top, bottom, one-sided walls
   gld_DrawItemsSortByTexture(GLDIT_WALL);
-  for (i = gld_drawinfo.num_items[GLDIT_WALL] - 1; i >= 0; i--)
+  for (i = gld_drawinfo_ready.num_items[GLDIT_WALL] - 1; i >= 0; i--)
   {
-    gld_ProcessWall(gld_drawinfo.items[GLDIT_WALL][i].item.wall);
+    gld_ProcessWall(gld_drawinfo_ready.items[GLDIT_WALL][i].item.wall);
   }
 
   // masked geometry
@@ -2647,12 +2647,12 @@ void gld_DrawScene(player_t *player)
 
   gld_DrawItemsSortByTexture(GLDIT_MWALL);
 
-  if (gl_use_stencil && gld_drawinfo.num_items[GLDIT_MWALL] > 0)
+  if (gl_use_stencil && gld_drawinfo_ready.num_items[GLDIT_MWALL] > 0)
   {
     // opaque mid walls without holes
-    for (i = gld_drawinfo.num_items[GLDIT_MWALL] - 1; i >= 0; i--)
+    for (i = gld_drawinfo_ready.num_items[GLDIT_MWALL] - 1; i >= 0; i--)
     {
-      GLWall *wall = gld_drawinfo.items[GLDIT_MWALL][i].item.wall;
+      GLWall *wall = gld_drawinfo_ready.items[GLDIT_MWALL][i].item.wall;
       if (!(wall->gltexture->flags & GLTEXTURE_HASHOLES))
       {
         gld_ProcessWall(wall);
@@ -2665,9 +2665,9 @@ void gld_DrawScene(player_t *player)
     glStencilFunc(GL_ALWAYS, 1, ~0);
     glStencilOp(GL_KEEP, GL_KEEP, GL_REPLACE);
 
-    for (i = gld_drawinfo.num_items[GLDIT_MWALL] - 1; i >= 0; i--)
+    for (i = gld_drawinfo_ready.num_items[GLDIT_MWALL] - 1; i >= 0; i--)
     {
-      GLWall *wall = gld_drawinfo.items[GLDIT_MWALL][i].item.wall;
+      GLWall *wall = gld_drawinfo_ready.items[GLDIT_MWALL][i].item.wall;
       if (wall->gltexture->flags & GLTEXTURE_HASHOLES)
       {
         gld_ProcessWall(wall);
@@ -2689,9 +2689,9 @@ void gld_DrawScene(player_t *player)
   else
   {
     // opaque mid walls
-    for (i = gld_drawinfo.num_items[GLDIT_MWALL] - 1; i >= 0; i--)
+    for (i = gld_drawinfo_ready.num_items[GLDIT_MWALL] - 1; i >= 0; i--)
     {
-      gld_ProcessWall(gld_drawinfo.items[GLDIT_MWALL][i].item.wall);
+      gld_ProcessWall(gld_drawinfo_ready.items[GLDIT_MWALL][i].item.wall);
     }
   }
 
@@ -2703,7 +2703,7 @@ void gld_DrawScene(player_t *player)
   // normal sky (not a skybox)
   if (gl_drawskys == skytype_none || gl_drawskys == skytype_standard)
   {
-    dsda_RecordDrawSegs(gld_drawinfo.num_items[GLDIT_SWALL]);
+    dsda_RecordDrawSegs(gld_drawinfo_ready.num_items[GLDIT_SWALL]);
     // fake strips of sky
     glsl_PushNullShader();
     gld_DrawStripsSky();
@@ -2712,9 +2712,9 @@ void gld_DrawScene(player_t *player)
 
   // opaque sprites
   gld_DrawItemsSortSprites(GLDIT_SPRITE);
-  for (i = gld_drawinfo.num_items[GLDIT_SPRITE] - 1; i >= 0; i--)
+  for (i = gld_drawinfo_ready.num_items[GLDIT_SPRITE] - 1; i >= 0; i--)
   {
-    gld_DrawSprite(gld_drawinfo.items[GLDIT_SPRITE][i].item.sprite);
+    gld_DrawSprite(gld_drawinfo_ready.items[GLDIT_SPRITE][i].item.sprite);
   }
 
   // mode for viewing all the alive monsters
@@ -2733,9 +2733,9 @@ void gld_DrawScene(player_t *player)
     glDisable(GL_DEPTH_TEST);
     gld_DrawItemsSortByTexture(GLDIT_ASPRITE);
     glColor4f(1.0f, color, color, 1.0f);
-    for (i = gld_drawinfo.num_items[GLDIT_ASPRITE] - 1; i >= 0; i--)
+    for (i = gld_drawinfo_ready.num_items[GLDIT_ASPRITE] - 1; i >= 0; i--)
     {
-      gld_DrawSprite(gld_drawinfo.items[GLDIT_ASPRITE][i].item.sprite);
+      gld_DrawSprite(gld_drawinfo_ready.items[GLDIT_ASPRITE][i].item.sprite);
     }
     glColor4f(1.0f, 1.0f, 1.0f, 1.0f);
     glEnable(GL_DEPTH_TEST);
@@ -2762,10 +2762,10 @@ void gld_DrawScene(player_t *player)
    * Refer to the discussion below for more detail.
    * https://github.com/coelckers/prboom-plus/pull/262
    */
-  if (gld_drawinfo.num_items[GLDIT_TWALL] > 0 || gld_drawinfo.num_items[GLDIT_TSPRITE] > 0)
+  if (gld_drawinfo_ready.num_items[GLDIT_TWALL] > 0 || gld_drawinfo_ready.num_items[GLDIT_TSPRITE] > 0)
   {
-    int twall_idx   = gld_drawinfo.num_items[GLDIT_TWALL] - 1;
-    int tsprite_idx = gld_drawinfo.num_items[GLDIT_TSPRITE] - 1;
+    int twall_idx   = gld_drawinfo_ready.num_items[GLDIT_TWALL] - 1;
+    int tsprite_idx = gld_drawinfo_ready.num_items[GLDIT_TSPRITE] - 1;
 
     if (tsprite_idx > 0)
       gld_DrawItemsSortSprites(GLDIT_TSPRITE);
@@ -2779,12 +2779,12 @@ void gld_DrawScene(player_t *player)
       {
         /* both are left to draw, determine
          * which is farther */
-        seg_t *twseg = gld_drawinfo.items[GLDIT_TWALL][twall_idx].item.wall->seg;
+        seg_t *twseg = gld_drawinfo_ready.items[GLDIT_TWALL][twall_idx].item.wall->seg;
         int ti;
         for (ti = tsprite_idx; ti >= 0; ti--) {
           /* reconstruct the sprite xy */
-          fixed_t tsx = gld_drawinfo.items[GLDIT_TSPRITE][ti].item.sprite->fx;
-          fixed_t tsy = gld_drawinfo.items[GLDIT_TSPRITE][ti].item.sprite->fy;
+          fixed_t tsx = gld_drawinfo_ready.items[GLDIT_TSPRITE][ti].item.sprite->fx;
+          fixed_t tsy = gld_drawinfo_ready.items[GLDIT_TSPRITE][ti].item.sprite->fy;
 
           if (R_PointOnSegSide(tsx, tsy, twseg))
           {
@@ -2805,14 +2805,14 @@ void gld_DrawScene(player_t *player)
       if (draw_tsprite)
       {
         /* transparent sprite is farther, draw it */
-        gld_DrawSprite(gld_drawinfo.items[GLDIT_TSPRITE][tsprite_idx].item.sprite);
+        gld_DrawSprite(gld_drawinfo_ready.items[GLDIT_TSPRITE][tsprite_idx].item.sprite);
         tsprite_idx--;
       }
       else
       {
         glDepthMask(GL_FALSE);
         /* transparent wall is farther, draw it */
-        gld_ProcessWall(gld_drawinfo.items[GLDIT_TWALL][twall_idx].item.wall);
+        gld_ProcessWall(gld_drawinfo_ready.items[GLDIT_TWALL][twall_idx].item.wall);
         glDepthMask(GL_TRUE);
         twall_idx--;
       }

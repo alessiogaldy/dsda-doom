@@ -60,6 +60,9 @@ extern dboolean gl_ui_lightmode_indexed;
 extern dboolean gl_automap_lightmode_indexed;
 extern dboolean gl_menu_lightmode_indexed;
 void gld_FlushTextures(void);
+// Hands the finished scene from the BSP walk to the draw phase. Called from
+// R_RenderPlayerView, which is shared with the software renderer.
+void gld_PublishDrawInfo(void);
 
 void gld_InitVertexData();
 void gld_CleanVertexData();

@@ -118,9 +118,9 @@ void gld_DrawFakeSkyStrips(void)
   glColorMask(GL_FALSE, GL_FALSE, GL_FALSE, GL_FALSE); // no graphics
   gld_EnableTexture2D(GL_TEXTURE0_ARB, false);
 
-  for (i = gld_drawinfo.num_items[GLDIT_SWALL] - 1; i >= 0; i--)
+  for (i = gld_drawinfo_ready.num_items[GLDIT_SWALL] - 1; i >= 0; i--)
   {
-    GLWall* wall = gld_drawinfo.items[GLDIT_SWALL][i].item.wall;
+    GLWall* wall = gld_drawinfo_ready.items[GLDIT_SWALL][i].item.wall;
 
     glBegin(GL_TRIANGLE_STRIP);
     glVertex3f(wall->glseg->x1,wall->ytop,wall->glseg->z1);
@@ -287,9 +287,9 @@ void gld_DrawStripsSky(void)
 
   glMatrixMode(GL_TEXTURE);
 
-  for (i = gld_drawinfo.num_items[GLDIT_SWALL] - 1; i >= 0; i--)
+  for (i = gld_drawinfo_ready.num_items[GLDIT_SWALL] - 1; i >= 0; i--)
   {
-    GLWall *wall = gld_drawinfo.items[GLDIT_SWALL][i].item.wall;
+    GLWall *wall = gld_drawinfo_ready.items[GLDIT_SWALL][i].item.wall;
 
     gltexture = (gl_drawskys == skytype_none ? NULL : wall->gltexture);
     gld_BindSkyTexture(gltexture);
