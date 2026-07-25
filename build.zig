@@ -20,6 +20,7 @@ const portmidi = @import("zig/deps/portmidi.zig");
 const opus = @import("zig/deps/opus.zig");
 const flac = @import("zig/deps/flac.zig");
 const libsndfile = @import("zig/deps/libsndfile.zig");
+const sdl2_mixer = @import("zig/deps/sdl2_mixer.zig");
 
 const version = "0.29.4";
 const project_name = "dsda-doom";
@@ -296,9 +297,10 @@ const Vendored = struct {
     xmp: ?*std.Build.Step.Compile = null,
     portmidi: ?*std.Build.Step.Compile = null,
     sndfile: ?*std.Build.Step.Compile = null,
+    sdl2_mixer: ?*std.Build.Step.Compile = null,
 
     fn any(v: Vendored) bool {
-        return v.vorbisfile != null or v.mad != null or v.xmp != null or v.portmidi != null or v.sndfile != null;
+        return v.vorbisfile != null or v.mad != null or v.xmp != null or v.portmidi != null or v.sndfile != null or v.sdl2_mixer != null;
     }
 };
 
@@ -342,9 +344,6 @@ fn linkDependencies(
     }
 
     var packages: std.ArrayList([]const u8) = .empty;
-    packages.appendSlice(b.allocator, &.{
-        "sdl2", "SDL2_mixer",
-    }) catch @panic("OOM");
 
     // Vendored by default; `-fsys=<name>` falls back to the system copy.
     const dep_args = .{ .target = target, .optimize = optimize };
@@ -407,7 +406,6 @@ fn linkDependencies(
 
     // The optional backends' .c files are always compiled -- they self-stub via
     // #ifdef -- so only the link and the HAVE_LIB* define are conditional.
-    if (features.image) packages.append(b.allocator, "SDL2_image") catch @panic("OOM");
     if (features.fluidsynth) packages.append(b.allocator, "fluidsynth") catch @panic("OOM");
     if (features.xmp) {
         if (b.systemIntegrationOption("libxmp", .{ .default = false })) {
@@ -415,6 +413,42 @@ fn linkDependencies(
         } else {
             vendored.xmp = libxmp.build(b, b.dependency("libxmp_upstream", .{}), target, optimize);
             mod.linkLibrary(vendored.xmp.?);
+        }
+    }
+
+    // SDL2, SDL2_image and SDL2_mixer move as a unit. SDL2_mixer binds its
+    // SDL2 at link time, so mixing a vendored SDL2 with a system SDL2_mixer
+    // (or vice versa) puts two SDL2 copies with independent global state in
+    // one process: separate event queues, separate audio subsystems.
+    const sys_sdl = b.systemIntegrationOption("sdl2", .{ .default = false });
+    if (sys_sdl) {
+        packages.append(b.allocator, "sdl2") catch @panic("OOM");
+        packages.append(b.allocator, "SDL2_mixer") catch @panic("OOM");
+        if (features.image) packages.append(b.allocator, "SDL2_image") catch @panic("OOM");
+    } else {
+        const dep_opts = .{ .target = target, .optimize = optimize };
+        const sdl_dep = b.dependency("sdl2", dep_opts);
+        const sdl_lib = sdl_dep.artifact("SDL2");
+        mod.linkLibrary(sdl_lib);
+        // dsda includes "SDL.h" flat, but the package installs headers under
+        // an SDL2/ subdirectory.
+        mod.addIncludePath(sdl_lib.getEmittedIncludeTree().path(b, "SDL2"));
+
+        vendored.sdl2_mixer = sdl2_mixer.build(
+            b,
+            b.dependency("sdl2_mixer_upstream", .{}),
+            target,
+            optimize,
+            sdl_lib,
+            vendored.xmp,
+        );
+        mod.linkLibrary(vendored.sdl2_mixer.?);
+
+        if (features.image) {
+            const img_lib = b.dependency("sdl2_image", dep_opts).artifact("SDL2_image");
+            mod.linkLibrary(img_lib);
+            // Installed as SDL2/SDL_image.h, but dsda includes it flat.
+            mod.addIncludePath(img_lib.getEmittedIncludeTree().path(b, "SDL2"));
         }
     }
     if (features.portmidi) {
