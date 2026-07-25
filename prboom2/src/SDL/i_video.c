@@ -562,6 +562,8 @@ void I_ShutdownGraphics(void)
 
 static dboolean queue_frame_capture;
 static dboolean queue_screenshot;
+static dboolean queue_frame_hash;
+static const char *frame_hash_png;
 
 void I_QueueFrameCapture(void)
 {
@@ -571,6 +573,14 @@ void I_QueueFrameCapture(void)
 void I_QueueScreenshot(void)
 {
   queue_screenshot = true;
+}
+
+// png_path may be NULL; when given, the frame is also written out so a
+// difference can be looked at rather than only detected.
+void I_QueueFrameHash(const char *png_path)
+{
+  queue_frame_hash = true;
+  frame_hash_png = png_path;
 }
 
 void I_HandleCapture(void)
@@ -585,6 +595,16 @@ void I_HandleCapture(void)
   {
     M_ScreenShot();
     queue_screenshot = false;
+  }
+
+  if (queue_frame_hash)
+  {
+    // Deliberately on stdout and machine-readable: the harness parses this.
+    lprintf(LO_INFO, "FRAMEHASH tic=%d hash=%016llx\n",
+            gametic, I_HashScreen());
+    if (frame_hash_png)
+      M_DoScreenShot(frame_hash_png);
+    queue_frame_hash = false;
   }
 }
 

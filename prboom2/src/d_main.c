@@ -569,6 +569,56 @@ void D_Display (fixed_t frac)
 //  calls I_GetTime, I_StartFrame, and I_StartTic
 //
 
+// Render regression testing.
+//
+// Renders specific gametics of a demo and prints a fingerprint of each, so two
+// builds can be compared. Nothing else can detect a rendering change: every
+// spec in the suite runs -nodraw, which skips the renderer entirely.
+//
+// The frame is fingerprinted inside I_HandleCapture, after drawing completes
+// but before the buffer swap, which is where the existing screenshot and video
+// capture hooks fire.
+static void D_CheckFrameHash(void)
+{
+  static dsda_arg_t *arg;
+  static dboolean parsed;
+  static int tics[64];
+  static int count;
+  static int next;
+
+  if (!parsed)
+  {
+    parsed = true;
+    arg = dsda_Arg(dsda_arg_framehash);
+    if (arg->found)
+    {
+      const char *p = arg->value.v_string;
+
+      while (*p && count < 64)
+      {
+        tics[count++] = atoi(p);
+        while (*p && *p != ',') p++;
+        if (*p == ',') p++;
+      }
+    }
+  }
+
+  if (next >= count)
+  {
+    // One tic past the last capture: the frame was fingerprinted during the
+    // previous D_Display, so there is nothing left to render.
+    if (count > 0 && gametic > tics[count - 1])
+      I_SafeExit(0);
+    return;
+  }
+
+  if (gametic >= tics[next])
+  {
+    I_QueueFrameHash(NULL);
+    next++;
+  }
+}
+
 static void D_DoomLoop(void)
 {
   if (dsda_IntConfig(dsda_config_startup_delay_ms) > 0)
@@ -597,6 +647,8 @@ static void D_DoomLoop(void)
     }
     else
       TryRunTics (); // will run at least one tic
+
+    D_CheckFrameHash();
 
     // killough 3/16/98: change consoleplayer to displayplayer
     if (players[displayplayer].mo) // cph 2002/08/10

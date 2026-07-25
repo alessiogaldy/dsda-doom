@@ -327,6 +327,24 @@ pub fn build(b: *std.Build) void {
     bench.has_side_effects = true;
     if (b.args) |args| bench.addArgs(args);
     b.step("bench", "Measure playsim throughput (gametics/sec)").dependOn(&bench.step);
+
+    // Render regression check. The rspec suites all run -nodraw, so nothing
+    // else in the project can observe rendering.
+    const shots_exe = b.addExecutable(.{
+        .name = "shots",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("zig/tools/shots.zig"),
+            .target = b.graph.host,
+            .optimize = .ReleaseSafe,
+        }),
+    });
+    const shots = b.addRunArtifact(shots_exe);
+    shots.addArg("--bin");
+    shots.addArg(b.pathJoin(&.{ b.install_prefix, "bin", project_name }));
+    shots.step.dependOn(b.getInstallStep());
+    shots.has_side_effects = true;
+    if (b.args) |args| shots.addArgs(args);
+    b.step("shots", "Check rendered frames against recorded fingerprints").dependOn(&shots.step);
 }
 
 /// Artifacts built from source, exposed so `zig build check-deps` can smoke-test

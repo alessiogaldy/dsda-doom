@@ -93,6 +93,12 @@ static arg_config_t arg_config[dsda_arg_count] = {
     "plays the given demo file as fast as possible, timing the process",
     arg_string,
   },
+  [dsda_arg_framehash] = {
+    "-framehash", NULL, NULL,
+    "prints a fingerprint of the rendered frame at the given gametics "
+    "(comma separated) and exits after the last one",
+    arg_string,
+  },
   [dsda_arg_fastdemo] = {
     "-fastdemo", NULL, NULL,
     "plays the given demo file as fast as possible, skipping some frames",

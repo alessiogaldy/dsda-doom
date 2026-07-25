@@ -64,6 +64,34 @@ void I_UpdateRenderSize(void)
 }
 
 //
+// I_HashScreen
+//
+// Fingerprints the finished frame, for detecting rendering regressions.
+// The demo suites all run with -nodraw and so cannot observe rendering at
+// all; this is the only thing that can tell whether a change altered a pixel.
+//
+// Hashes the raw RGB24 buffer rather than an encoded file, so the result does
+// not depend on the PNG encoder or on any metadata it might embed.
+//
+unsigned long long I_HashScreen(void)
+{
+  const unsigned char *pixels = I_GrabScreen();
+  unsigned long long h = 1469598103934665603ULL; // FNV-1a offset basis
+  size_t i, n;
+
+  if (!pixels)
+    return 0;
+
+  n = (size_t) renderW * (size_t) renderH * 3;
+  for (i = 0; i < n; i++)
+  {
+    h ^= pixels[i];
+    h *= 1099511628211ULL;
+  }
+  return h;
+}
+
+//
 // I_ScreenShot // Modified to work with SDL2 resizeable window and fullscreen desktop - DTIED
 //
 

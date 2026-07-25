@@ -67,6 +67,8 @@ void I_ShutdownGraphics(void);
 void I_SetPalette(int pal); /* CPhipps - pass down palette number */
 
 void I_QueueFrameCapture(void);
+void I_QueueFrameHash(const char *png_path);
+unsigned long long I_HashScreen(void);
 void I_QueueScreenshot(void);
 void I_HandleCapture(void);
 
