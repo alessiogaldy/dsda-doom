@@ -368,6 +368,19 @@ fn linkDependencies(
 /// ("duplicate linked dylib") and the binary will not start. Passing all the
 /// package names to pkg-config at once makes pkg-config do the deduplication.
 fn addPkgConfig(b: *std.Build, mod: *std.Build.Module, packages: []const []const u8) void {
+    // pkg-config only knows about the host. When cross-compiling it happily
+    // returns host include and library paths, which would silently produce a
+    // binary linked against the wrong architecture's libraries. Fail loudly
+    // instead, naming what still needs an in-tree build.
+    if (!mod.resolved_target.?.query.isNative()) {
+        std.debug.panic(
+            "cross-compiling, but these dependencies still resolve via pkg-config: {s}\n" ++
+                "pkg-config reports host paths, so the result would be linked against the " ++
+                "wrong target. Vendor them (zig/deps/) or pass -fsys= only on a native build.",
+            .{std.mem.join(b.allocator, " ", packages) catch "?"},
+        );
+    }
+
     for ([_][]const u8{ "--cflags", "--libs" }) |mode| {
         var argv: std.ArrayList([]const u8) = .empty;
         argv.appendSlice(b.allocator, &.{ "pkg-config", mode }) catch @panic("OOM");
