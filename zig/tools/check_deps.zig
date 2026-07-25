@@ -52,6 +52,13 @@ extern fn xmp_start_player(ctx: XmpContext, rate: c_int, format: c_int) c_int;
 extern fn xmp_end_player(ctx: XmpContext) void;
 extern fn xmp_play_buffer(ctx: XmpContext, buffer: *anyopaque, size: c_int, loops: c_int) c_int;
 
+// PortMidi. Cannot be tested by decoding anything -- it talks to MIDI
+// hardware -- but initialising it and enumerating devices does prove the
+// platform backend (CoreMIDI / ALSA) is linked and reachable.
+extern fn Pm_Initialize() c_int;
+extern fn Pm_Terminate() c_int;
+extern fn Pm_CountDevices() c_int;
+
 pub fn main(init: std.process.Init) !void {
     const io = init.io;
     const arena = init.arena.allocator();
@@ -92,6 +99,13 @@ pub fn main(init: std.process.Init) !void {
                 continue;
             };
             std.debug.print("ok    xmp: rendered {d} bytes from {s}\n", .{ bytes, arg });
+        } else if (std.mem.eql(u8, name, "portmidi")) {
+            const devices = checkPortmidi() catch |err| {
+                std.debug.print("FAIL  portmidi: {s}\n", .{@errorName(err)});
+                failures += 1;
+                continue;
+            };
+            std.debug.print("ok    portmidi: initialised, {d} devices\n", .{devices});
         } else {
             std.debug.print("FAIL  unknown check '{s}'\n", .{name});
             failures += 1;
@@ -203,4 +217,17 @@ fn checkXmp(arena: std.mem.Allocator, path: []const u8) !usize {
     if (total < 32 * 1024) return error.XmpTooLittleAudio;
     if (nonzero == 0) return error.XmpAllSilence;
     return total;
+}
+
+/// Initialises PortMidi and counts devices.
+///
+/// Zero devices is a valid result on a machine with no MIDI hardware, so this
+/// only asserts that initialisation succeeds and enumeration does not fail --
+/// enough to catch an unlinked or broken platform backend.
+fn checkPortmidi() !c_int {
+    if (Pm_Initialize() != 0) return error.PmInitFailed;
+    defer _ = Pm_Terminate();
+    const n = Pm_CountDevices();
+    if (n < 0) return error.PmCountFailed;
+    return n;
 }

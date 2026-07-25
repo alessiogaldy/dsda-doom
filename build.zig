@@ -16,6 +16,7 @@ const libogg = @import("zig/deps/libogg.zig");
 const libvorbis = @import("zig/deps/libvorbis.zig");
 const libmad = @import("zig/deps/libmad.zig");
 const libxmp = @import("zig/deps/libxmp.zig");
+const portmidi = @import("zig/deps/portmidi.zig");
 
 const version = "0.29.4";
 const project_name = "dsda-doom";
@@ -251,6 +252,10 @@ pub fn build(b: *std.Build) void {
             checker.root_module.linkLibrary(lib);
             run_checks.addPrefixedFileArg("xmp:", b.path("zig/testdata/square.mod"));
         }
+        if (vendored.portmidi) |lib| {
+            checker.root_module.linkLibrary(lib);
+            run_checks.addArg("portmidi:-");
+        }
         check_deps.dependOn(&run_checks.step);
     }
 
@@ -270,9 +275,10 @@ const Vendored = struct {
     vorbisfile: ?*std.Build.Step.Compile = null,
     mad: ?*std.Build.Step.Compile = null,
     xmp: ?*std.Build.Step.Compile = null,
+    portmidi: ?*std.Build.Step.Compile = null,
 
     fn any(v: Vendored) bool {
-        return v.vorbisfile != null or v.mad != null or v.xmp != null;
+        return v.vorbisfile != null or v.mad != null or v.xmp != null or v.portmidi != null;
     }
 };
 
@@ -380,7 +386,14 @@ fn linkDependencies(
             mod.linkLibrary(vendored.xmp.?);
         }
     }
-    if (features.portmidi) packages.append(b.allocator, "portmidi") catch @panic("OOM");
+    if (features.portmidi) {
+        if (b.systemIntegrationOption("portmidi", .{ .default = false })) {
+            packages.append(b.allocator, "portmidi") catch @panic("OOM");
+        } else {
+            vendored.portmidi = portmidi.build(b, b.dependency("portmidi_upstream", .{}), target, optimize);
+            mod.linkLibrary(vendored.portmidi.?);
+        }
+    }
 
     addPkgConfig(b, mod, packages.items);
     return vendored;
