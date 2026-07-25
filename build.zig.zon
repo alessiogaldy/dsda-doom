@@ -56,6 +56,14 @@
             .url = "git+https://github.com/libsdl-org/SDL_mixer.git?ref=release-2.8.1#171eb2d420d5643e4ee11514a06e04a41a463bbd",
             .hash = "N-V-__8AAGWXTgFPSrGJjGAjxcm7U7dwZIhHQCdADq3FtBEg",
         },
+        .fluidsynth_upstream = .{
+            .url = "git+https://github.com/FluidSynth/fluidsynth.git?ref=v2.5.7#3ede3f7c8ffc5d16e5d28f416cbfd71f3ad2b814",
+            .hash = "N-V-__8AABSiZAB4kWPyUzh4Bu4ZA2WvxZg5PrUi-5h5exIv",
+        },
+        .gcem_upstream = .{
+            .url = "git+https://github.com/kthohr/gcem.git?ref=v1.18.0#012ae73c6d0a2cb09ffe86475f5c6fba3926e200",
+            .hash = "N-V-__8AANzZBQDI3KsjvCbpZbjSDeNXiudh4qWyEJtGQEVJ",
+        },
     },
     .paths = .{
         "build.zig",
