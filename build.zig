@@ -21,6 +21,7 @@ const opus = @import("zig/deps/opus.zig");
 const flac = @import("zig/deps/flac.zig");
 const libsndfile = @import("zig/deps/libsndfile.zig");
 const sdl2_mixer = @import("zig/deps/sdl2_mixer.zig");
+const fluidsynth = @import("zig/deps/fluidsynth.zig");
 
 const version = "0.29.4";
 const project_name = "dsda-doom";
@@ -268,6 +269,15 @@ pub fn build(b: *std.Build) void {
             checker.root_module.linkLibrary(lib);
             run_checks.addArg("portmidi:-");
         }
+        if (vendored.fluidsynth) |lib| {
+            checker.root_module.linkLibrary(lib);
+            // The soundfont dsda embeds into dsda-doom.wad, used here straight
+            // from the data directory.
+            run_checks.addPrefixedFileArg(
+                "fluidsynth:",
+                b.path("prboom2/data/lumps/soundfont/sndfont.lmp"),
+            );
+        }
         if (vendored.sndfile) |lib| {
             checker.root_module.linkLibrary(lib);
             // One per container so a codec that failed to wire up is visible.
@@ -298,9 +308,10 @@ const Vendored = struct {
     portmidi: ?*std.Build.Step.Compile = null,
     sndfile: ?*std.Build.Step.Compile = null,
     sdl2_mixer: ?*std.Build.Step.Compile = null,
+    fluidsynth: ?*std.Build.Step.Compile = null,
 
     fn any(v: Vendored) bool {
-        return v.vorbisfile != null or v.mad != null or v.xmp != null or v.portmidi != null or v.sndfile != null or v.sdl2_mixer != null;
+        return v.vorbisfile != null or v.mad != null or v.xmp != null or v.portmidi != null or v.sndfile != null or v.sdl2_mixer != null or v.fluidsynth != null;
     }
 };
 
@@ -412,7 +423,20 @@ fn linkDependencies(
 
     // The optional backends' .c files are always compiled -- they self-stub via
     // #ifdef -- so only the link and the HAVE_LIB* define are conditional.
-    if (features.fluidsynth) packages.append(b.allocator, "fluidsynth") catch @panic("OOM");
+    if (features.fluidsynth) {
+        if (b.systemIntegrationOption("fluidsynth", .{ .default = false })) {
+            packages.append(b.allocator, "fluidsynth") catch @panic("OOM");
+        } else {
+            vendored.fluidsynth = fluidsynth.build(
+                b,
+                b.dependency("fluidsynth_upstream", .{}),
+                b.dependency("gcem_upstream", .{}),
+                target,
+                optimize,
+            );
+            mod.linkLibrary(vendored.fluidsynth.?);
+        }
+    }
     if (features.xmp) {
         if (b.systemIntegrationOption("libxmp", .{ .default = false })) {
             packages.append(b.allocator, "libxmp") catch @panic("OOM");
