@@ -44,6 +44,18 @@
             .url = "git+https://github.com/xiph/opus.git?ref=v1.4#82ac57d9f1aaf575800cf17373348e45b7ce6c0d",
             .hash = "N-V-__8AAP92QABSiu7CvttxBXncpvUJxFTjCwbsFWY82kbb",
         },
+        .sdl2 = .{
+            .url = "git+https://github.com/allyourcodebase/SDL#65394f7e69dd7a22098ad807c2c7cb6fde531549",
+            .hash = "SDL-2.32.10-JToi36C3EgHHc1bO7BS_ivmRu2-MNA7TQIqF_YXrSTPs",
+        },
+        .sdl2_image = .{
+            .url = "git+https://github.com/allyourcodebase/SDL_image?ref=v2#fe687469fa386a63830cef7c78f873e4128f1a07",
+            .hash = "SDL_image-2.8.12--aJoHdAWAACwM2L9qoQsg8zCaV1G7iWWYFR83ZAPXm6B",
+        },
+        .sdl2_mixer_upstream = .{
+            .url = "git+https://github.com/libsdl-org/SDL_mixer.git?ref=release-2.8.1#171eb2d420d5643e4ee11514a06e04a41a463bbd",
+            .hash = "N-V-__8AAGWXTgFPSrGJjGAjxcm7U7dwZIhHQCdADq3FtBEg",
+        },
     },
     .paths = .{
         "build.zig",
