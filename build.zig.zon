@@ -20,6 +20,10 @@
             .url = "git+https://github.com/xiph/vorbis.git?ref=v1.3.7#0657aee69dec8508a0011f47f3b69d7538e9d262",
             .hash = "N-V-__8AABFeSABbG3yTdgW9-VtmXuiKdz0cat3SbbtFzh5i",
         },
+        .libmad_upstream = .{
+            .url = "git+https://codeberg.org/tenacityteam/libmad.git?ref=0.16.4#ee7c3cdd4361b7f7c7da52fa3ba9f76cc35230a9",
+            .hash = "N-V-__8AACeLDQCIVVGQRTf7c-NoYofqU8LHmD_ysnITdbHT",
+        },
     },
     .paths = .{
         "build.zig",
