@@ -4,9 +4,10 @@
     .fingerprint = 0xe5e238a265840f0b,
     .minimum_zig_version = "0.16.0",
     .dependencies = .{
-        // Stage 1 resolves every dependency from the system via pkg-config.
-        // Vendored packages land here from stage 2 on, all `.lazy = true` so a
-        // library left on the system path never downloads its sources.
+        .zlib = .{
+            .url = "https://github.com/allyourcodebase/zlib/archive/refs/tags/1.3.2.tar.gz",
+            .hash = "zlib-1.3.2-ZZQ7lc8NAAAHm9MDfplvwoesXvk4tVm6VCsiI8KnIbT0",
+        },
     },
     .paths = .{
         "build.zig",
