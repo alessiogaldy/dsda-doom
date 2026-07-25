@@ -75,6 +75,24 @@ extern fn sf_close(f: ?*anyopaque) c_int;
 extern fn sf_readf_short(f: ?*anyopaque, ptr: [*]i16, frames: i64) i64;
 extern fn sf_strerror(f: ?*anyopaque) [*:0]const u8;
 
+// FluidSynth. All handles are opaque pointers, so nothing needs mirroring.
+extern fn new_fluid_settings() ?*anyopaque;
+extern fn delete_fluid_settings(s: ?*anyopaque) void;
+extern fn new_fluid_synth(s: ?*anyopaque) ?*anyopaque;
+extern fn delete_fluid_synth(s: ?*anyopaque) void;
+extern fn fluid_synth_sfload(synth: ?*anyopaque, path: [*:0]const u8, reset: c_int) c_int;
+extern fn fluid_synth_noteon(synth: ?*anyopaque, chan: c_int, key: c_int, vel: c_int) c_int;
+extern fn fluid_synth_write_float(
+    synth: ?*anyopaque,
+    len: c_int,
+    lout: *anyopaque,
+    loff: c_int,
+    lincr: c_int,
+    rout: *anyopaque,
+    roff: c_int,
+    rincr: c_int,
+) c_int;
+
 pub fn main(init: std.process.Init) !void {
     const io = init.io;
     const arena = init.arena.allocator();
@@ -129,6 +147,13 @@ pub fn main(init: std.process.Init) !void {
                 continue;
             };
             std.debug.print("ok    sndfile: read {d} frames from {s}\n", .{ frames, arg });
+        } else if (std.mem.eql(u8, name, "fluidsynth")) {
+            checkFluidsynth(arena, arg) catch |err| {
+                std.debug.print("FAIL  fluidsynth: {s}\n", .{@errorName(err)});
+                failures += 1;
+                continue;
+            };
+            std.debug.print("ok    fluidsynth: synthesised a note from {s}\n", .{arg});
         } else {
             std.debug.print("FAIL  unknown check '{s}'\n", .{name});
             failures += 1;
@@ -284,4 +309,35 @@ fn checkSndfile(arena: std.mem.Allocator, path: []const u8) !i64 {
     if (total == 0) return error.SndfileNoFrames;
     if (total != info.frames) return error.SndfileShortRead;
     return total;
+}
+
+/// Loads a soundfont, plays a note, and checks that actual audio comes out.
+///
+/// This build uses FluidSynth's cpp11 OS abstraction rather than the usual
+/// glib one, which is a far less travelled path -- it supplies the threading
+/// and synchronisation the mixer relies on. A broken OSAL would most likely
+/// show up as silence or a hang rather than a link error, so rendering real
+/// samples is the check that matters.
+fn checkFluidsynth(arena: std.mem.Allocator, sf2_path: []const u8) !void {
+    const path_z = try arena.dupeZ(u8, sf2_path);
+
+    const settings = new_fluid_settings() orelse return error.FluidNoSettings;
+    defer delete_fluid_settings(settings);
+
+    const synth = new_fluid_synth(settings) orelse return error.FluidNoSynth;
+    defer delete_fluid_synth(synth);
+
+    if (fluid_synth_sfload(synth, path_z.ptr, 1) == -1) return error.FluidSoundfontLoadFailed;
+    if (fluid_synth_noteon(synth, 0, 60, 127) != 0) return error.FluidNoteOnFailed;
+
+    // Render ~0.5s and look for a non-trivial signal.
+    var left: [22050]f32 = undefined;
+    var right: [22050]f32 = undefined;
+    if (fluid_synth_write_float(synth, left.len, &left, 0, 1, &right, 0, 1) != 0) {
+        return error.FluidWriteFailed;
+    }
+
+    var peak: f32 = 0;
+    for (left) |sample| peak = @max(peak, @abs(sample));
+    if (peak < 0.001) return error.FluidSilence;
 }
