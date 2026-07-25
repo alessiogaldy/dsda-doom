@@ -24,6 +24,10 @@
             .url = "git+https://codeberg.org/tenacityteam/libmad.git?ref=0.16.4#ee7c3cdd4361b7f7c7da52fa3ba9f76cc35230a9",
             .hash = "N-V-__8AACeLDQCIVVGQRTf7c-NoYofqU8LHmD_ysnITdbHT",
         },
+        .libxmp_upstream = .{
+            .url = "git+https://github.com/libxmp/libxmp.git?ref=libxmp-4.6.3#bed660f8e530d399c38f27a5a7732f4e79740585",
+            .hash = "N-V-__8AACauhwMqdsFHJqwkA3-D2JrBLbact_T8775miX4a",
+        },
     },
     .paths = .{
         "build.zig",

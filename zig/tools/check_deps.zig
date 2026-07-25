@@ -41,6 +41,17 @@ extern fn mad_frame_finish(frame: *MadOpaque) void;
 extern fn mad_synth_init(synth: *MadOpaque) void;
 extern fn mad_synth_frame(synth: *MadOpaque, frame: *MadOpaque) void;
 
+// libxmp. Its context is an opaque pointer, so no struct mirroring needed.
+const XmpContext = ?*anyopaque;
+
+extern fn xmp_create_context() XmpContext;
+extern fn xmp_free_context(ctx: XmpContext) void;
+extern fn xmp_load_module(ctx: XmpContext, path: [*:0]const u8) c_int;
+extern fn xmp_release_module(ctx: XmpContext) void;
+extern fn xmp_start_player(ctx: XmpContext, rate: c_int, format: c_int) c_int;
+extern fn xmp_end_player(ctx: XmpContext) void;
+extern fn xmp_play_buffer(ctx: XmpContext, buffer: *anyopaque, size: c_int, loops: c_int) c_int;
+
 pub fn main(init: std.process.Init) !void {
     const io = init.io;
     const arena = init.arena.allocator();
@@ -74,6 +85,13 @@ pub fn main(init: std.process.Init) !void {
                 continue;
             };
             std.debug.print("ok    mad: decoded {d} frames from {s}\n", .{ frames, arg });
+        } else if (std.mem.eql(u8, name, "xmp")) {
+            const bytes = checkXmp(arena, arg) catch |err| {
+                std.debug.print("FAIL  xmp: {s}\n", .{@errorName(err)});
+                failures += 1;
+                continue;
+            };
+            std.debug.print("ok    xmp: rendered {d} bytes from {s}\n", .{ bytes, arg });
         } else {
             std.debug.print("FAIL  unknown check '{s}'\n", .{name});
             failures += 1;
@@ -152,4 +170,37 @@ fn checkMad(io: Io, arena: std.mem.Allocator, path: []const u8) !usize {
     // 2s of audio is ~76 frames at 1152 samples each.
     if (frames < 32) return error.MadTooFewFrames;
     return frames;
+}
+
+/// Loads a tracker module and renders audio from it.
+///
+/// libxmp is a large pile of format loaders; this proves the loader table and
+/// the mixer are both wired up, not just that the archive linked.
+fn checkXmp(arena: std.mem.Allocator, path: []const u8) !usize {
+    const path_z = try arena.dupeZ(u8, path);
+
+    const ctx = xmp_create_context() orelse return error.XmpNoContext;
+    defer xmp_free_context(ctx);
+
+    if (xmp_load_module(ctx, path_z.ptr) != 0) return error.XmpLoadFailed;
+    defer xmp_release_module(ctx);
+
+    if (xmp_start_player(ctx, 44100, 0) != 0) return error.XmpStartFailed;
+    defer xmp_end_player(ctx);
+
+    var buffer: [4096]u8 = undefined;
+    var total: usize = 0;
+    var nonzero: usize = 0;
+    // Render a bounded number of chunks; the module loops forever.
+    for (0..64) |_| {
+        if (xmp_play_buffer(ctx, &buffer, buffer.len, 1) != 0) break;
+        total += buffer.len;
+        for (buffer) |byte| {
+            if (byte != 0) nonzero += 1;
+        }
+    }
+
+    if (total < 32 * 1024) return error.XmpTooLittleAudio;
+    if (nonzero == 0) return error.XmpAllSilence;
+    return total;
 }
