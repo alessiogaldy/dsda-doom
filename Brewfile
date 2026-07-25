@@ -17,3 +17,5 @@ brew "sdl2_mixer"
 
 # Packaging tools
 brew "dylibbundler"
+
+brew "mise"
