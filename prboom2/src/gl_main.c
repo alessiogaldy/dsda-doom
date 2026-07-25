@@ -1014,15 +1014,15 @@ void gld_Clear(void)
     glClear(clearbits);
 }
 
-void gld_StartDrawScene(void)
+// Frame setup, split in two so a thread boundary can sit between them.
+//
+// gld_StartFrame is CPU-side state the BSP walk reads -- camera, sky shift,
+// render markers -- so it must run on whichever thread walks the tree.
+// gld_BeginFrameGL touches the GL context and must run wherever the context is
+// current. Nothing in the GL half produces a value the CPU half needs, which
+// is what makes the split possible.
+void gld_StartFrame(void)
 {
-  gld_MultisamplingSet();
-
-  gld_SetPalette(-1);
-
-  glViewport(viewport[0], viewport[1], viewport[2], viewport[3]);
-  glScissor(0, SCREENHEIGHT - viewheight, viewwidth, viewheight);
-  glEnable(GL_SCISSOR_TEST);
   // Player coordinates
   xCamera=-(float)viewx/MAP_SCALE;
   yCamera=(float)viewy/MAP_SCALE;
@@ -1056,6 +1056,20 @@ void gld_StartDrawScene(void)
   // elim - Always enabled (when supported) for upscaling with GL exclusive disabled
   SceneInTexture = gl_ext_framebuffer_object;
 
+  rendermarker++;
+  scene_has_overlapped_sprites = false;
+}
+
+void gld_BeginFrameGL(void)
+{
+  gld_MultisamplingSet();
+
+  gld_SetPalette(-1);
+
+  glViewport(viewport[0], viewport[1], viewport[2], viewport[3]);
+  glScissor(0, SCREENHEIGHT - viewheight, viewwidth, viewheight);
+  glEnable(GL_SCISSOR_TEST);
+
   // Vortex: Set FBO object
   if (SceneInTexture)
   {
@@ -1076,9 +1090,12 @@ void gld_StartDrawScene(void)
 
   gld_InitColormapTextures(false);
   gld_InitFuzzTexture();
+}
 
-  rendermarker++;
-  scene_has_overlapped_sprites = false;
+void gld_StartDrawScene(void)
+{
+  gld_StartFrame();
+  gld_BeginFrameGL();
 }
 
 void gld_EndDrawScene(void)
