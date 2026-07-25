@@ -59,6 +59,22 @@ extern fn Pm_Initialize() c_int;
 extern fn Pm_Terminate() c_int;
 extern fn Pm_CountDevices() c_int;
 
+// libsndfile. SF_INFO is a small, stable, documented struct so it is mirrored
+// directly; sf_open returns an opaque handle.
+const SfInfo = extern struct {
+    frames: i64,
+    samplerate: c_int,
+    channels: c_int,
+    format: c_int,
+    sections: c_int,
+    seekable: c_int,
+};
+
+extern fn sf_open(path: [*:0]const u8, mode: c_int, info: *SfInfo) ?*anyopaque;
+extern fn sf_close(f: ?*anyopaque) c_int;
+extern fn sf_readf_short(f: ?*anyopaque, ptr: [*]i16, frames: i64) i64;
+extern fn sf_strerror(f: ?*anyopaque) [*:0]const u8;
+
 pub fn main(init: std.process.Init) !void {
     const io = init.io;
     const arena = init.arena.allocator();
@@ -106,6 +122,13 @@ pub fn main(init: std.process.Init) !void {
                 continue;
             };
             std.debug.print("ok    portmidi: initialised, {d} devices\n", .{devices});
+        } else if (std.mem.eql(u8, name, "sndfile")) {
+            const frames = checkSndfile(arena, arg) catch |err| {
+                std.debug.print("FAIL  sndfile: {s} ({s})\n", .{ @errorName(err), arg });
+                failures += 1;
+                continue;
+            };
+            std.debug.print("ok    sndfile: read {d} frames from {s}\n", .{ frames, arg });
         } else {
             std.debug.print("FAIL  unknown check '{s}'\n", .{name});
             failures += 1;
@@ -230,4 +253,35 @@ fn checkPortmidi() !c_int {
     const n = Pm_CountDevices();
     if (n < 0) return error.PmCountFailed;
     return n;
+}
+
+/// Opens a sound file and reads it to the end.
+///
+/// dsda routes every sound effect through libsndfile, and the demo suites run
+/// with -nosound, so this is the only coverage that path gets. Running it over
+/// WAV, FLAC and Ogg fixtures also proves HAVE_EXTERNAL_XIPH_LIBS actually took
+/// effect -- without it the compressed formats fail to open while WAV still
+/// works, which is exactly the kind of partial breakage worth catching.
+fn checkSndfile(arena: std.mem.Allocator, path: []const u8) !i64 {
+    const path_z = try arena.dupeZ(u8, path);
+
+    var info: SfInfo = std.mem.zeroes(SfInfo);
+    const SFM_READ: c_int = 0x10;
+    const f = sf_open(path_z.ptr, SFM_READ, &info) orelse return error.SndfileOpenFailed;
+    defer _ = sf_close(f);
+
+    if (info.channels <= 0 or info.samplerate <= 0) return error.SndfileBadInfo;
+
+    var buffer: [4096]i16 = undefined;
+    const chunk_frames = @divTrunc(@as(i64, buffer.len), info.channels);
+    var total: i64 = 0;
+    while (true) {
+        const n = sf_readf_short(f, &buffer, chunk_frames);
+        if (n <= 0) break;
+        total += n;
+    }
+
+    if (total == 0) return error.SndfileNoFrames;
+    if (total != info.frames) return error.SndfileShortRead;
+    return total;
 }

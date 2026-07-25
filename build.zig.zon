@@ -32,6 +32,18 @@
             .url = "git+https://github.com/PortMidi/portmidi.git?ref=v2.0.4#b808babecdc5d05205467dab5c1006c5ac0fdfd4",
             .hash = "N-V-__8AAMmPDgBLHdmtrgc9i2etLFvyrsnS9ztWFz6mxmHy",
         },
+        .libsndfile_upstream = .{
+            .url = "git+https://github.com/libsndfile/libsndfile.git?ref=1.2.2#72f6af15e8f85157bd622ed45b979025828b7001",
+            .hash = "N-V-__8AAIfAMgDwpjw8l82wHFpTW3NG6PkKLrtlMeg-ZD1r",
+        },
+        .flac_upstream = .{
+            .url = "git+https://github.com/xiph/flac.git?ref=1.4.3#28e4f0528c76b296c561e922ba67d43751990599",
+            .hash = "N-V-__8AAKJvQgB9LG_sXNxRcDa309N0l1eEBnJ9dHTGaPBB",
+        },
+        .opus_upstream = .{
+            .url = "git+https://github.com/xiph/opus.git?ref=v1.4#82ac57d9f1aaf575800cf17373348e45b7ce6c0d",
+            .hash = "N-V-__8AAP92QABSiu7CvttxBXncpvUJxFTjCwbsFWY82kbb",
+        },
     },
     .paths = .{
         "build.zig",

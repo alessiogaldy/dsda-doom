@@ -17,6 +17,9 @@ const libvorbis = @import("zig/deps/libvorbis.zig");
 const libmad = @import("zig/deps/libmad.zig");
 const libxmp = @import("zig/deps/libxmp.zig");
 const portmidi = @import("zig/deps/portmidi.zig");
+const opus = @import("zig/deps/opus.zig");
+const flac = @import("zig/deps/flac.zig");
+const libsndfile = @import("zig/deps/libsndfile.zig");
 
 const version = "0.29.4";
 const project_name = "dsda-doom";
@@ -82,6 +85,10 @@ pub fn build(b: *std.Build) void {
 
     const posix = t.os.tag != .windows;
 
+    // Decided here rather than inside linkDependencies because config.h has to
+    // agree with which libsndfile actually gets linked.
+    const sys_sndfile = b.systemIntegrationOption("sndfile", .{ .default = false });
+
     // The wad is installed next to the binary because I_FindFileInternal
     // (prboom2/src/SDL/i_system.c) searches I_ExeDir first. This replaces
     // CMake's POST_BUILD copy_if_different.
@@ -121,7 +128,10 @@ pub fn build(b: *std.Build) void {
         .HAVE_LIBXMP = with_xmp,
         .HAVE_LIBVORBISFILE = with_vorbisfile,
         .HAVE_LIBPORTMIDI = with_portmidi,
-        .HAVE_SNDFILE_MPEG = sndfileHasMpeg(b),
+        // Our libsndfile build has no MPEG support (that needs mpg123 and
+        // LAME); the system one usually does. MP3 *music* is unaffected --
+        // that goes through libmad -- this is only MP3 sound effects.
+        .HAVE_SNDFILE_MPEG = if (sys_sndfile) systemSndfileHasMpeg(b) else libsndfile.has_mpeg,
 
         .SIMPLECHECKS = simplechecks,
         .RANGECHECK = rangecheck,
@@ -197,6 +207,7 @@ pub fn build(b: *std.Build) void {
         .xmp = with_xmp,
         .vorbisfile = with_vorbisfile,
         .portmidi = with_portmidi,
+        .sys_sndfile = sys_sndfile,
     });
 
     const exe = b.addExecutable(.{ .name = project_name, .root_module = mod });
@@ -256,6 +267,14 @@ pub fn build(b: *std.Build) void {
             checker.root_module.linkLibrary(lib);
             run_checks.addArg("portmidi:-");
         }
+        if (vendored.sndfile) |lib| {
+            checker.root_module.linkLibrary(lib);
+            // One per container so a codec that failed to wire up is visible.
+            for ([_][]const u8{ "sine.wav", "sine.flac", "sine.ogg" }) |f| {
+                run_checks.addPrefixedFileArg("sndfile:", b.path(b.fmt("zig/testdata/{s}", .{f})));
+            }
+        }
+
         check_deps.dependOn(&run_checks.step);
     }
 
@@ -276,9 +295,10 @@ const Vendored = struct {
     mad: ?*std.Build.Step.Compile = null,
     xmp: ?*std.Build.Step.Compile = null,
     portmidi: ?*std.Build.Step.Compile = null,
+    sndfile: ?*std.Build.Step.Compile = null,
 
     fn any(v: Vendored) bool {
-        return v.vorbisfile != null or v.mad != null or v.xmp != null or v.portmidi != null;
+        return v.vorbisfile != null or v.mad != null or v.xmp != null or v.portmidi != null or v.sndfile != null;
     }
 };
 
@@ -289,6 +309,7 @@ const Features = struct {
     xmp: bool,
     vorbisfile: bool,
     portmidi: bool,
+    sys_sndfile: bool,
 };
 
 /// Each library is either built from source by the Zig package manager or
@@ -322,7 +343,7 @@ fn linkDependencies(
 
     var packages: std.ArrayList([]const u8) = .empty;
     packages.appendSlice(b.allocator, &.{
-        "sdl2", "SDL2_mixer", "sndfile",
+        "sdl2", "SDL2_mixer",
     }) catch @panic("OOM");
 
     // Vendored by default; `-fsys=<name>` falls back to the system copy.
@@ -349,20 +370,30 @@ fn linkDependencies(
         mod.linkLibrary(libzip.build(b, upstream, target, optimize, zlib_lib.?));
     }
 
+    // libogg is shared by libvorbis, FLAC and libsndfile. Build it once so
+    // there is a single copy of the symbols in the link.
+    const ogg_lib = libogg.build(b, b.dependency("libogg_upstream", .{}), target, optimize);
+    const vorbis_lib = libvorbis.build(b, b.dependency("libvorbis_upstream", .{}), target, optimize, ogg_lib);
+
     if (features.vorbisfile) {
         if (b.systemIntegrationOption("vorbisfile", .{ .default = false })) {
             packages.append(b.allocator, "vorbisfile") catch @panic("OOM");
         } else {
-            const ogg = libogg.build(b, b.dependency("libogg_upstream", .{}), target, optimize);
-            vendored.vorbisfile = libvorbis.build(
-                b,
-                b.dependency("libvorbis_upstream", .{}),
-                target,
-                optimize,
-                ogg,
-            );
-            mod.linkLibrary(vendored.vorbisfile.?);
+            vendored.vorbisfile = vorbis_lib;
+            mod.linkLibrary(vorbis_lib);
         }
+    }
+
+    if (features.sys_sndfile) {
+        packages.append(b.allocator, "sndfile") catch @panic("OOM");
+    } else {
+        vendored.sndfile = libsndfile.build(b, b.dependency("libsndfile_upstream", .{}), target, optimize, .{
+            .ogg = ogg_lib,
+            .vorbis = vorbis_lib,
+            .flac = flac.build(b, b.dependency("flac_upstream", .{}), target, optimize, ogg_lib),
+            .opus = opus.build(b, b.dependency("opus_upstream", .{}), target, optimize),
+        });
+        mod.linkLibrary(vendored.sndfile.?);
     }
 
     if (features.mad) {
@@ -555,7 +586,7 @@ fn addFiles(
 /// libsndfile gained MPEG support in 1.1.0. CMake checks SndFile_VERSION; we
 /// ask pkg-config the same question rather than hardcoding it, so a host with
 /// an older libsndfile fails at build time instead of misbehaving at runtime.
-fn sndfileHasMpeg(b: *std.Build) bool {
+fn systemSndfileHasMpeg(b: *std.Build) bool {
     var code: u8 = undefined;
     const out = b.runAllowFail(
         &.{ "pkg-config", "--modversion", "sndfile" },
