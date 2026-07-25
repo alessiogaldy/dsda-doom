@@ -1773,7 +1773,7 @@ mobj_t* P_SpawnMobj(fixed_t x,fixed_t y,fixed_t z,mobjtype_t type)
     {
       space -= 40 * FRACUNIT;
       mobj->z =
-        ((space * P_Random(pr_heretic)) >> 8) + mobj->floorz + 40 * FRACUNIT;
+        ((int)((unsigned) space * (unsigned) P_Random(pr_heretic)) >> 8) + mobj->floorz + 40 * FRACUNIT;
     }
     else
     {
