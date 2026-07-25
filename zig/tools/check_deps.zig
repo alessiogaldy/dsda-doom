@@ -10,6 +10,12 @@
 const std = @import("std");
 const Io = std.Io;
 
+/// Which vendored libraries are actually linked into this build. The extern
+/// declarations below are only reachable through comptime-true branches, so a
+/// library that is disabled or system-provided does not leave undefined
+/// symbols at link time.
+const avail = @import("check_deps_options");
+
 // libvorbisfile. Only the handful of entry points needed to prove the decoder
 // produces sane PCM; OggVorbis_File is opaque here, sized generously.
 const OggVorbisFile = extern struct { opaque_storage: [2048]u8 };
@@ -113,6 +119,11 @@ pub fn main(init: std.process.Init) !void {
         const arg = spec[sep + 1 ..];
 
         if (std.mem.eql(u8, name, "vorbis")) {
+            if (!avail.vorbis) {
+                std.debug.print("FAIL  vorbis: requested but not linked into this build\n", .{});
+                failures += 1;
+                continue;
+            }
             checkVorbis(arena, arg) catch |err| {
                 std.debug.print("FAIL  vorbis: {s}\n", .{@errorName(err)});
                 failures += 1;
@@ -120,6 +131,11 @@ pub fn main(init: std.process.Init) !void {
             };
             std.debug.print("ok    vorbis: decoded {s}\n", .{arg});
         } else if (std.mem.eql(u8, name, "mad")) {
+            if (!avail.mad) {
+                std.debug.print("FAIL  mad: requested but not linked into this build\n", .{});
+                failures += 1;
+                continue;
+            }
             const frames = checkMad(io, arena, arg) catch |err| {
                 std.debug.print("FAIL  mad: {s}\n", .{@errorName(err)});
                 failures += 1;
@@ -127,6 +143,11 @@ pub fn main(init: std.process.Init) !void {
             };
             std.debug.print("ok    mad: decoded {d} frames from {s}\n", .{ frames, arg });
         } else if (std.mem.eql(u8, name, "xmp")) {
+            if (!avail.xmp) {
+                std.debug.print("FAIL  xmp: requested but not linked into this build\n", .{});
+                failures += 1;
+                continue;
+            }
             const bytes = checkXmp(arena, arg) catch |err| {
                 std.debug.print("FAIL  xmp: {s}\n", .{@errorName(err)});
                 failures += 1;
@@ -134,6 +155,11 @@ pub fn main(init: std.process.Init) !void {
             };
             std.debug.print("ok    xmp: rendered {d} bytes from {s}\n", .{ bytes, arg });
         } else if (std.mem.eql(u8, name, "portmidi")) {
+            if (!avail.portmidi) {
+                std.debug.print("FAIL  portmidi: requested but not linked into this build\n", .{});
+                failures += 1;
+                continue;
+            }
             const devices = checkPortmidi() catch |err| {
                 std.debug.print("FAIL  portmidi: {s}\n", .{@errorName(err)});
                 failures += 1;
@@ -141,6 +167,11 @@ pub fn main(init: std.process.Init) !void {
             };
             std.debug.print("ok    portmidi: initialised, {d} devices\n", .{devices});
         } else if (std.mem.eql(u8, name, "sndfile")) {
+            if (!avail.sndfile) {
+                std.debug.print("FAIL  sndfile: requested but not linked into this build\n", .{});
+                failures += 1;
+                continue;
+            }
             const frames = checkSndfile(arena, arg) catch |err| {
                 std.debug.print("FAIL  sndfile: {s} ({s})\n", .{ @errorName(err), arg });
                 failures += 1;
@@ -148,6 +179,11 @@ pub fn main(init: std.process.Init) !void {
             };
             std.debug.print("ok    sndfile: read {d} frames from {s}\n", .{ frames, arg });
         } else if (std.mem.eql(u8, name, "fluidsynth")) {
+            if (!avail.fluidsynth) {
+                std.debug.print("FAIL  fluidsynth: requested but not linked into this build\n", .{});
+                failures += 1;
+                continue;
+            }
             checkFluidsynth(arena, arg) catch |err| {
                 std.debug.print("FAIL  fluidsynth: {s}\n", .{@errorName(err)});
                 failures += 1;
