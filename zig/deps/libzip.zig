@@ -26,6 +26,7 @@ pub fn build(
 ) *std.Build.Step.Compile {
     const t = target.result;
     const posix = t.os.tag != .windows;
+    const mingw = t.os.tag == .windows and t.abi == .gnu;
 
     // zipconf.h is the public header; zip.h includes it.
     const zipconf_h = b.addConfigHeader(.{
@@ -65,8 +66,12 @@ pub fn build(
         .ENABLE_FDOPEN = posix,
         .HAVE_FDOPEN = posix,
         .HAVE_FILENO = posix,
-        .HAVE_FSEEKO = posix,
-        .HAVE_FTELLO = posix,
+        // mingw provides fseeko/ftello even though the rest of the POSIX
+        // surface is absent. Getting these wrong makes libzip's compat.h
+        // define them as macros, which then collide with mingw's own
+        // declarations in stdio.h.
+        .HAVE_FSEEKO = posix or mingw,
+        .HAVE_FTELLO = posix or mingw,
         .HAVE_FCHMOD = posix,
         .HAVE_MKSTEMP = posix,
         .HAVE_STRCASECMP = posix,
