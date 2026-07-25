@@ -520,14 +520,7 @@ void gld_SetupFloodedPlaneCoords(GLWall *wall, gl_strip_coords_t *c)
 
 void gld_SetupFloodedPlaneLight(GLWall *wall)
 {
-  if (wall->seg->backsector)
-  {
-    float light;
-    light = gld_CalcLightLevel(wall->seg->backsector->lightlevel+(extralight<<5));
-    gld_StaticLightAlpha(light, wall->alpha);
-  }
-  else
-  {
-    gld_StaticLightAlpha(wall->light, wall->alpha);
-  }
+  // Resolved in gld_AddDrawWallItem: backsector->lightlevel and extralight are
+  // playsim state and must not be read from the draw phase.
+  gld_StaticLightAlpha(wall->flooded_light, wall->alpha);
 }

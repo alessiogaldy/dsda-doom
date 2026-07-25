@@ -1137,6 +1137,38 @@ void gld_EndDrawScene(void)
 
 static void gld_AddDrawWallItem(GLDrawItemType itemtype, void *itemdata)
 {
+  GLWall *wall = (GLWall *) itemdata;
+
+  // Resolve, while building the scene, everything the draw phase would
+  // otherwise read from live world state.
+  //
+  // The playsim mutates sector light levels and plane heights every tic.
+  // Reading them during drawing is safe today only because drawing happens on
+  // the same thread, immediately after. Capturing them here -- where the world
+  // is already being walked and is consistent -- is what lets the draw phase
+  // move off the main thread.
+  //
+  // Neither changes what is rendered: the values are exactly what the draw
+  // phase would have computed, read a few microseconds earlier in the same
+  // frame.
+  if (wall->seg && wall->seg->linedef)
+  {
+    // Flood-plane lighting reads backsector->lightlevel and extralight, the
+    // latter bumped by weapon fire.
+    if (wall->flag == GLDWF_TOPFLUD || wall->flag == GLDWF_BOTFLUD)
+      wall->flooded_light = wall->seg->backsector
+        ? gld_CalcLightLevel(wall->seg->backsector->lightlevel + (extralight << 5))
+        : wall->light;
+
+    // Vertex height splits read sector floor and ceiling heights, which move
+    // with lifts, doors and crushers. gld_RecalcVertexHeights is guarded by
+    // rendermarker, bumped once per frame by gld_StartDrawScene before the BSP
+    // walk, so doing it here makes the call in gld_ProcessWall a no-op rather
+    // than repeated work.
+    gld_RecalcVertexHeights(wall->seg->linedef->v1);
+    gld_RecalcVertexHeights(wall->seg->linedef->v2);
+  }
+
   gld_AddDrawItem(itemtype, itemdata);
 }
 

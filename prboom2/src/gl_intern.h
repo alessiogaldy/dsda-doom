@@ -135,6 +135,11 @@ typedef struct
   GLTexture *gltexture;
   byte flag;
   seg_t *seg;
+  // Light for flood-plane walls, resolved when the wall is added to the draw
+  // list. It derives from backsector->lightlevel and the extralight global,
+  // both of which the playsim mutates every tic, so it must not be read while
+  // drawing. Only meaningful when flag is GLDWF_TOPFLUD or GLDWF_BOTFLUD.
+  float flooded_light;
 } GLWall;
 
 typedef enum
