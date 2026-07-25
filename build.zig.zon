@@ -1,0 +1,18 @@
+.{
+    .name = .dsda_doom,
+    .version = "0.29.4",
+    .fingerprint = 0xe5e238a265840f0b,
+    .minimum_zig_version = "0.16.0",
+    .dependencies = .{
+        // Stage 1 resolves every dependency from the system via pkg-config.
+        // Vendored packages land here from stage 2 on, all `.lazy = true` so a
+        // library left on the system path never downloads its sources.
+    },
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "zig",
+        "prboom2",
+        "COPYING",
+    },
+}
