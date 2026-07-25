@@ -184,7 +184,7 @@ pub fn build(b: *std.Build) void {
         .language = .cpp,
     });
 
-    linkDependencies(b, mod, t, .{
+    linkDependencies(b, mod, t, target, optimize, .{
         .image = with_image,
         .mad = with_mad,
         .fluidsynth = with_fluidsynth,
@@ -239,18 +239,20 @@ const Features = struct {
     portmidi: bool,
 };
 
-/// Stage 1: everything comes from the system, matching the pkg-config-first
-/// behaviour of the Find*.cmake modules.
+/// Each library is either built from source by the Zig package manager or
+/// resolved from the system, switchable per library with `-fsys=<name>` /
+/// `-fno-sys=<name>`. Libraries with no in-tree build yet default to system.
 ///
-/// When a library moves to the Zig package manager it gets a
-/// b.systemIntegrationOption toggle here (`-fsys=name` / `-fno-sys=name`).
-/// Note SDL2, SDL2_image and SDL2_mixer must move *together*: a vendored SDL2
-/// beside a system SDL2_mixer would put two SDL2 copies with independent global
-/// state in one process, because SDL2_mixer binds its SDL2 by absolute path.
+/// Note SDL2, SDL2_image and SDL2_mixer must move to vendored *together*: a
+/// vendored SDL2 beside a system SDL2_mixer would put two SDL2 copies with
+/// independent global state in one process, because SDL2_mixer binds its SDL2
+/// by absolute path.
 fn linkDependencies(
     b: *std.Build,
     mod: *std.Build.Module,
     t: std.Target,
+    target: std.Build.ResolvedTarget,
+    optimize: std.builtin.OptimizeMode,
     features: Features,
 ) void {
     // OpenGL and GLU are the driver ABI and can never be vendored, and neither
@@ -266,8 +268,23 @@ fn linkDependencies(
 
     var packages: std.ArrayList([]const u8) = .empty;
     packages.appendSlice(b.allocator, &.{
-        "sdl2", "SDL2_mixer", "sndfile", "zlib", "libzip",
+        "sdl2", "SDL2_mixer", "sndfile",
     }) catch @panic("OOM");
+
+    // Vendored by default; `-fsys=zlib` falls back to the system copy.
+    const dep_args = .{ .target = target, .optimize = optimize };
+    if (b.systemIntegrationOption("zlib", .{ .default = false })) {
+        packages.append(b.allocator, "zlib") catch @panic("OOM");
+    } else {
+        mod.linkLibrary(b.dependency("zlib", dep_args).artifact("z"));
+    }
+
+    // Still system-only. allyourcodebase/libzip cannot be used on Zig 0.16:
+    // it pins zlib 1.3.1, whose manifest predates the enum-literal .name
+    // syntax, so resolving it fails with "expected enum literal". The package
+    // is a single commit from 2025-07 with no newer branch, so this needs an
+    // in-tree build script over upstream libzip rather than a version bump.
+    packages.append(b.allocator, "libzip") catch @panic("OOM");
 
     // The optional backends' .c files are always compiled -- they self-stub via
     // #ifdef -- so only the link and the HAVE_LIB* define are conditional.
