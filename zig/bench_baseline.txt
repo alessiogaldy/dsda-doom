@@ -1,0 +1,8 @@
+# Playsim throughput baseline, in gametics per second.
+# Regenerate with: zig build bench -- --save
+# Machine-specific: do not compare numbers across different hardware.
+sunlust29	18183
+sunlust30	4463
+sunder31	10938
+sunder18	3737
+sunder20	1937

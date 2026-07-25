@@ -306,6 +306,27 @@ pub fn build(b: *std.Build) void {
     spec.step.dependOn(b.getInstallStep());
     if (b.args) |args| spec.addArgs(args);
     b.step("spec", "Run the rspec demo regression suite").dependOn(&spec.step);
+
+    // Playsim throughput benchmark. Host-native on purpose: it times the
+    // binary, so a cross-compiled one would be meaningless here.
+    const bench_exe = b.addExecutable(.{
+        .name = "bench",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("zig/tools/bench.zig"),
+            .target = b.graph.host,
+            .optimize = .ReleaseSafe,
+        }),
+    });
+    const bench = b.addRunArtifact(bench_exe);
+    // The installed copy, not the cache artifact: dsda finds dsda-doom.wad by
+    // looking next to its own executable, and only the install tree has both.
+    bench.addArg("--bin");
+    bench.addArg(b.pathJoin(&.{ b.install_prefix, "bin", project_name }));
+    bench.step.dependOn(b.getInstallStep());
+    // Spawns the game repeatedly and may rewrite the baseline file.
+    bench.has_side_effects = true;
+    if (b.args) |args| bench.addArgs(args);
+    b.step("bench", "Measure playsim throughput (gametics/sec)").dependOn(&bench.step);
 }
 
 /// Artifacts built from source, exposed so `zig build check-deps` can smoke-test
