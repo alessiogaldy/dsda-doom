@@ -8,6 +8,7 @@
 //! Usage: check_deps <vorbis:file.ogg> [<name:arg> ...]
 
 const std = @import("std");
+const Io = std.Io;
 
 // libvorbisfile. Only the handful of entry points needed to prove the decoder
 // produces sane PCM; OggVorbis_File is opaque here, sized generously.
@@ -25,7 +26,23 @@ extern fn ov_read(
 ) c_long;
 extern fn ov_clear(vf: *OggVorbisFile) c_int;
 
+// libmad. Its structs are large (mad_frame and mad_synth hold multi-KB
+// overlap and PCM buffers) and their layout is not part of a stable ABI, so
+// rather than mirror them we hand libmad generously oversized, aligned
+// scratch space and only touch it through libmad's own functions.
+const MadOpaque = extern struct { storage: [128 * 1024]u8 align(16) };
+
+extern fn mad_stream_init(stream: *MadOpaque) void;
+extern fn mad_stream_buffer(stream: *MadOpaque, buf: [*]const u8, length: c_ulong) void;
+extern fn mad_stream_finish(stream: *MadOpaque) void;
+extern fn mad_frame_init(frame: *MadOpaque) void;
+extern fn mad_frame_decode(frame: *MadOpaque, stream: *MadOpaque) c_int;
+extern fn mad_frame_finish(frame: *MadOpaque) void;
+extern fn mad_synth_init(synth: *MadOpaque) void;
+extern fn mad_synth_frame(synth: *MadOpaque, frame: *MadOpaque) void;
+
 pub fn main(init: std.process.Init) !void {
+    const io = init.io;
     const arena = init.arena.allocator();
     const args = try init.minimal.args.toSlice(arena);
     if (args.len < 2) {
@@ -50,6 +67,13 @@ pub fn main(init: std.process.Init) !void {
                 continue;
             };
             std.debug.print("ok    vorbis: decoded {s}\n", .{arg});
+        } else if (std.mem.eql(u8, name, "mad")) {
+            const frames = checkMad(io, arena, arg) catch |err| {
+                std.debug.print("FAIL  mad: {s}\n", .{@errorName(err)});
+                failures += 1;
+                continue;
+            };
+            std.debug.print("ok    mad: decoded {d} frames from {s}\n", .{ frames, arg });
         } else {
             std.debug.print("FAIL  unknown check '{s}'\n", .{name});
             failures += 1;
@@ -88,4 +112,44 @@ fn checkVorbis(arena: std.mem.Allocator, path: []const u8) !void {
     // means the decoder ran rather than bailing on the first packet.
     if (total < 64 * 1024) return error.OggTooLittlePcm;
     if (nonzero * 4 < total) return error.OggMostlySilence;
+}
+
+/// Decodes every MPEG frame in the file and returns the count.
+///
+/// This is specifically here to catch a wrong FPM_* fixed-point selection in
+/// the libmad build: the wrong choice for the target still compiles and links,
+/// it just decodes to garbage. A bad selection makes frames fail to decode.
+fn checkMad(io: Io, arena: std.mem.Allocator, path: []const u8) !usize {
+    const data = try Io.Dir.cwd().readFileAlloc(io, path, arena, .limited(16 << 20));
+
+    const stream = try arena.create(MadOpaque);
+    const frame = try arena.create(MadOpaque);
+    const synth = try arena.create(MadOpaque);
+
+    mad_stream_init(stream);
+    defer mad_stream_finish(stream);
+    mad_frame_init(frame);
+    defer mad_frame_finish(frame);
+    mad_synth_init(synth);
+
+    mad_stream_buffer(stream, data.ptr, data.len);
+
+    var frames: usize = 0;
+    var errors: usize = 0;
+    while (true) {
+        if (mad_frame_decode(frame, stream) != 0) {
+            // Recoverable errors are normal at stream edges; give up once
+            // they dominate, which is what a broken decoder looks like.
+            errors += 1;
+            if (errors > 16) break;
+            continue;
+        }
+        mad_synth_frame(synth, frame);
+        frames += 1;
+        if (frames > 100_000) break;
+    }
+
+    // 2s of audio is ~76 frames at 1152 samples each.
+    if (frames < 32) return error.MadTooFewFrames;
+    return frames;
 }
