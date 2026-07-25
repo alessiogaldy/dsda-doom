@@ -1,0 +1,4 @@
+Sunlust map 25 uv max in 5:50 by Kinetic|5:50|sunlust/sl25m550.lmp|
+Sunlust map 29 uv max in 5:49 by Kinetic|5:49|sunlust/sl29m549.lmp|
+Sunlust map 28 uv max in 8:30 by Kinetic|8:30|sunlust/sl28m830.lmp|
+Sunlust map 30 uv max in 18:37 by Kinetic|18:37|sunlust/sl30m1837.lmp|
