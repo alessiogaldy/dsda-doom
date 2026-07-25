@@ -28,6 +28,10 @@
             .url = "git+https://github.com/libxmp/libxmp.git?ref=libxmp-4.6.3#bed660f8e530d399c38f27a5a7732f4e79740585",
             .hash = "N-V-__8AACauhwMqdsFHJqwkA3-D2JrBLbact_T8775miX4a",
         },
+        .portmidi_upstream = .{
+            .url = "git+https://github.com/PortMidi/portmidi.git?ref=v2.0.4#b808babecdc5d05205467dab5c1006c5ac0fdfd4",
+            .hash = "N-V-__8AAMmPDgBLHdmtrgc9i2etLFvyrsnS9ztWFz6mxmHy",
+        },
     },
     .paths = .{
         "build.zig",
