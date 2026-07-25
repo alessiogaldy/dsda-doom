@@ -12,6 +12,8 @@ const std = @import("std");
 const sources = @import("zig/sources.zig");
 const wad_data = @import("zig/wad_data.zig");
 const libzip = @import("zig/deps/libzip.zig");
+const libogg = @import("zig/deps/libogg.zig");
+const libvorbis = @import("zig/deps/libvorbis.zig");
 
 const version = "0.29.4";
 const project_name = "dsda-doom";
@@ -185,7 +187,7 @@ pub fn build(b: *std.Build) void {
         .language = .cpp,
     });
 
-    linkDependencies(b, mod, t, target, optimize, .{
+    const vendored = linkDependencies(b, mod, t, target, optimize, .{
         .image = with_image,
         .mad = with_mad,
         .fluidsynth = with_fluidsynth,
@@ -221,6 +223,27 @@ pub fn build(b: *std.Build) void {
     if (b.args) |args| run.addArgs(args);
     b.step("run", "Build and run dsda-doom").dependOn(&run.step);
 
+    // Smoke-tests for vendored libraries. The demo suites cover none of them:
+    // they run -nosound -nomusic and only open plain .wad files, so a broken
+    // vendored library can still pass all 1105 demos.
+    const check_deps = b.step("check-deps", "Smoke-test vendored dependencies");
+    if (vendored.any()) {
+        const checker = b.addExecutable(.{
+            .name = "check_deps",
+            .root_module = b.createModule(.{
+                .root_source_file = b.path("zig/tools/check_deps.zig"),
+                .target = target,
+                .optimize = optimize,
+            }),
+        });
+        const run_checks = b.addRunArtifact(checker);
+        if (vendored.vorbisfile) |lib| {
+            checker.root_module.linkLibrary(lib);
+            run_checks.addPrefixedFileArg("vorbis:", b.path("zig/testdata/sine.ogg"));
+        }
+        check_deps.dependOn(&run_checks.step);
+    }
+
     // The demo regression suite in spec/. This is the real correctness check:
     // a build-system change that perturbs float codegen shows up as a desync.
     const spec = b.addSystemCommand(&.{"rspec"});
@@ -230,6 +253,16 @@ pub fn build(b: *std.Build) void {
     if (b.args) |args| spec.addArgs(args);
     b.step("spec", "Run the rspec demo regression suite").dependOn(&spec.step);
 }
+
+/// Artifacts built from source, exposed so `zig build check-deps` can smoke-test
+/// them. Null means the library came from the system instead.
+const Vendored = struct {
+    vorbisfile: ?*std.Build.Step.Compile = null,
+
+    fn any(v: Vendored) bool {
+        return v.vorbisfile != null;
+    }
+};
 
 const Features = struct {
     image: bool,
@@ -255,7 +288,9 @@ fn linkDependencies(
     target: std.Build.ResolvedTarget,
     optimize: std.builtin.OptimizeMode,
     features: Features,
-) void {
+) Vendored {
+    var vendored: Vendored = .{};
+
     // OpenGL and GLU are the driver ABI and can never be vendored, and neither
     // ships a .pc file, so they are handled outside pkg-config.
     if (t.os.tag.isDarwin()) {
@@ -296,16 +331,32 @@ fn linkDependencies(
         mod.linkLibrary(libzip.build(b, upstream, target, optimize, zlib_lib.?));
     }
 
+    if (features.vorbisfile) {
+        if (b.systemIntegrationOption("vorbisfile", .{ .default = false })) {
+            packages.append(b.allocator, "vorbisfile") catch @panic("OOM");
+        } else {
+            const ogg = libogg.build(b, b.dependency("libogg_upstream", .{}), target, optimize);
+            vendored.vorbisfile = libvorbis.build(
+                b,
+                b.dependency("libvorbis_upstream", .{}),
+                target,
+                optimize,
+                ogg,
+            );
+            mod.linkLibrary(vendored.vorbisfile.?);
+        }
+    }
+
     // The optional backends' .c files are always compiled -- they self-stub via
     // #ifdef -- so only the link and the HAVE_LIB* define are conditional.
     if (features.image) packages.append(b.allocator, "SDL2_image") catch @panic("OOM");
     if (features.mad) packages.append(b.allocator, "mad") catch @panic("OOM");
     if (features.fluidsynth) packages.append(b.allocator, "fluidsynth") catch @panic("OOM");
     if (features.xmp) packages.append(b.allocator, "libxmp") catch @panic("OOM");
-    if (features.vorbisfile) packages.append(b.allocator, "vorbisfile") catch @panic("OOM");
     if (features.portmidi) packages.append(b.allocator, "portmidi") catch @panic("OOM");
 
     addPkgConfig(b, mod, packages.items);
+    return vendored;
 }
 
 /// Resolves every package in a *single* pkg-config invocation and applies the
