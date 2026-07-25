@@ -15,6 +15,7 @@ const libzip = @import("zig/deps/libzip.zig");
 const libogg = @import("zig/deps/libogg.zig");
 const libvorbis = @import("zig/deps/libvorbis.zig");
 const libmad = @import("zig/deps/libmad.zig");
+const libxmp = @import("zig/deps/libxmp.zig");
 
 const version = "0.29.4";
 const project_name = "dsda-doom";
@@ -246,6 +247,10 @@ pub fn build(b: *std.Build) void {
             checker.root_module.linkLibrary(lib);
             run_checks.addPrefixedFileArg("mad:", b.path("zig/testdata/sine.mp3"));
         }
+        if (vendored.xmp) |lib| {
+            checker.root_module.linkLibrary(lib);
+            run_checks.addPrefixedFileArg("xmp:", b.path("zig/testdata/square.mod"));
+        }
         check_deps.dependOn(&run_checks.step);
     }
 
@@ -264,9 +269,10 @@ pub fn build(b: *std.Build) void {
 const Vendored = struct {
     vorbisfile: ?*std.Build.Step.Compile = null,
     mad: ?*std.Build.Step.Compile = null,
+    xmp: ?*std.Build.Step.Compile = null,
 
     fn any(v: Vendored) bool {
-        return v.vorbisfile != null or v.mad != null;
+        return v.vorbisfile != null or v.mad != null or v.xmp != null;
     }
 };
 
@@ -366,7 +372,14 @@ fn linkDependencies(
     // #ifdef -- so only the link and the HAVE_LIB* define are conditional.
     if (features.image) packages.append(b.allocator, "SDL2_image") catch @panic("OOM");
     if (features.fluidsynth) packages.append(b.allocator, "fluidsynth") catch @panic("OOM");
-    if (features.xmp) packages.append(b.allocator, "libxmp") catch @panic("OOM");
+    if (features.xmp) {
+        if (b.systemIntegrationOption("libxmp", .{ .default = false })) {
+            packages.append(b.allocator, "libxmp") catch @panic("OOM");
+        } else {
+            vendored.xmp = libxmp.build(b, b.dependency("libxmp_upstream", .{}), target, optimize);
+            mod.linkLibrary(vendored.xmp.?);
+        }
+    }
     if (features.portmidi) packages.append(b.allocator, "portmidi") catch @panic("OOM");
 
     addPkgConfig(b, mod, packages.items);
