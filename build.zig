@@ -14,6 +14,7 @@ const wad_data = @import("zig/wad_data.zig");
 const libzip = @import("zig/deps/libzip.zig");
 const libogg = @import("zig/deps/libogg.zig");
 const libvorbis = @import("zig/deps/libvorbis.zig");
+const libmad = @import("zig/deps/libmad.zig");
 
 const version = "0.29.4";
 const project_name = "dsda-doom";
@@ -241,6 +242,10 @@ pub fn build(b: *std.Build) void {
             checker.root_module.linkLibrary(lib);
             run_checks.addPrefixedFileArg("vorbis:", b.path("zig/testdata/sine.ogg"));
         }
+        if (vendored.mad) |lib| {
+            checker.root_module.linkLibrary(lib);
+            run_checks.addPrefixedFileArg("mad:", b.path("zig/testdata/sine.mp3"));
+        }
         check_deps.dependOn(&run_checks.step);
     }
 
@@ -258,9 +263,10 @@ pub fn build(b: *std.Build) void {
 /// them. Null means the library came from the system instead.
 const Vendored = struct {
     vorbisfile: ?*std.Build.Step.Compile = null,
+    mad: ?*std.Build.Step.Compile = null,
 
     fn any(v: Vendored) bool {
-        return v.vorbisfile != null;
+        return v.vorbisfile != null or v.mad != null;
     }
 };
 
@@ -347,10 +353,18 @@ fn linkDependencies(
         }
     }
 
+    if (features.mad) {
+        if (b.systemIntegrationOption("mad", .{ .default = false })) {
+            packages.append(b.allocator, "mad") catch @panic("OOM");
+        } else {
+            vendored.mad = libmad.build(b, b.dependency("libmad_upstream", .{}), target, optimize);
+            mod.linkLibrary(vendored.mad.?);
+        }
+    }
+
     // The optional backends' .c files are always compiled -- they self-stub via
     // #ifdef -- so only the link and the HAVE_LIB* define are conditional.
     if (features.image) packages.append(b.allocator, "SDL2_image") catch @panic("OOM");
-    if (features.mad) packages.append(b.allocator, "mad") catch @panic("OOM");
     if (features.fluidsynth) packages.append(b.allocator, "fluidsynth") catch @panic("OOM");
     if (features.xmp) packages.append(b.allocator, "libxmp") catch @panic("OOM");
     if (features.portmidi) packages.append(b.allocator, "portmidi") catch @panic("OOM");
