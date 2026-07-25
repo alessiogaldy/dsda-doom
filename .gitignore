@@ -1,7 +1,15 @@
 /prboom2/ICONS/icons.aps
 /prboom2/release
 /build*
+# ...but /build* would otherwise swallow the Zig build scripts themselves.
+!/build.zig
+!/build.zig.zon
 /release*
+
+# Zig
+/zig-out/
+/.zig-cache/
+/zig-pkg/
 
 # spec files
 analysis.txt

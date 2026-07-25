@@ -1,8 +1,21 @@
 module Utility
   extend self
 
+  # Override with DSDA_DOOM to test a binary from another build system,
+  # e.g. DSDA_DOOM=./zig-out/bin/dsda-doom rspec
+  BINARY = ENV.fetch("DSDA_DOOM", "./zig-out/bin/dsda-doom")
+
+  # Written into the working directory by -levelstat and -analysis.
+  OUTPUT_FILES = ["levelstat.txt", "analysis.txt"].freeze
+
   def play_demo(lmp:, iwad: "DOOM2.WAD", pwad: nil, extra: nil)
-    command = "./build/dsda-doom.exe -iwad spec/support/wads/#{iwad}"
+    # Clear previous output first. Without this, a demo that produces no
+    # output at all leaves the previous example's file in place and the
+    # expectation silently reads *that* -- so the failure reported is a
+    # stale number from an unrelated test rather than an honest error.
+    OUTPUT_FILES.each { |f| File.delete(f) if File.exist?(f) }
+
+    command = "#{BINARY} -iwad spec/support/wads/#{iwad}"
     command << " -file spec/support/wads/#{pwad}" if pwad
     command << " -fastdemo \"spec/support/lmps/#{lmp}\""
     command << " -nosound -nomusic -nodraw -levelstat -analysis"

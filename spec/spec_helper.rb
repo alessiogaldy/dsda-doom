@@ -47,7 +47,10 @@ RSpec.configure do |config|
   # triggering implicit auto-inclusion in groups with matching metadata.
   config.shared_context_metadata_behavior = :apply_to_host_groups
 
+  # Slow suites, opt in with `rspec -t <tag>`.
   config.filter_run_excluding :heretic
+  config.filter_run_excluding :sunder
+  config.filter_run_excluding :sunlust
 
 # The settings below are suggested to provide a good initial experience
 # with RSpec, but feel free to customize to your heart's content.
