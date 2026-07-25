@@ -12,6 +12,14 @@
             .url = "git+https://github.com/nih-at/libzip.git?ref=v1.11.2#64b62d6b1a686a1b0bac1b6b9dcb635be0499afb",
             .hash = "N-V-__8AAJtlXgBSiT6jc2YlUoILTAkWMVq6S6SNa76fmRQK",
         },
+        .libogg_upstream = .{
+            .url = "git+https://github.com/xiph/ogg.git?ref=v1.3.6#be05b13e98b048f0b5a0f5fa8ce514d56db5f822",
+            .hash = "N-V-__8AAI81CwAMtDoZkVMBb3N5Y-mK838RiUlpfKXE7QGN",
+        },
+        .libvorbis_upstream = .{
+            .url = "git+https://github.com/xiph/vorbis.git?ref=v1.3.7#0657aee69dec8508a0011f47f3b69d7538e9d262",
+            .hash = "N-V-__8AABFeSABbG3yTdgW9-VtmXuiKdz0cat3SbbtFzh5i",
+        },
     },
     .paths = .{
         "build.zig",
