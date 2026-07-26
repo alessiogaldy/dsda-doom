@@ -686,9 +686,21 @@ void V_TouchPalette(void)
 // CPhipps - New function to set the palette to palette number pal.
 // Handles loading of PLAYPAL and calls I_SetPalette
 
+// True when the change was recorded instead of applied. Defined with the rest
+// of the recorder, below.
+static dboolean V_RecordPalette(int pal);
+
 void V_SetPalette(int pal)
 {
   currentPaletteIndex = pal;
+
+  // ST_doPaletteStuff calls this from inside ST_Drawer, so a damage flash lands
+  // partway through the frame -- after the scene, before the status bar. While
+  // recording, it has to be replayed at that same point rather than applied
+  // now, or the scene picks up a palette it should not have had until the next
+  // frame.
+  if (V_RecordPalette(pal))
+    return;
 
   if (V_IsOpenGLMode()) {
     gld_SetPalette(pal);
@@ -884,6 +896,387 @@ void V_InitMode(video_mode_t mode) {
       V_DrawShaded = WRAP_gld_DrawShaded;
       current_videomode = VID_MODEGL;
       break;
+  }
+}
+
+//
+// Recording the 2D drawing
+//
+// The status bar, HUD and menu read live playsim state -- st_stuff keeps
+// pointers into the player struct (w_ready.num = &plyr->ammo[...]) and
+// ST_doPaletteStuff reads the damage counter -- so they cannot be drawn on the
+// render thread while the simulation is running. They run on the main thread
+// instead, at the same point in the frame as before, with this table pointed at
+// recorders that store each call rather than issuing it. The render thread
+// replays the result.
+//
+// That works only because those drawers reach GL exclusively through this
+// table. The automap does not -- am_map calls gld_ directly -- which is why
+// automap frames are still drawn synchronously.
+
+typedef enum {
+  VC_BEGIN_UI, VC_END_UI,
+  VC_BEGIN_AUTOMAP, VC_END_AUTOMAP,
+  VC_BEGIN_MENU, VC_END_MENU,
+  VC_COPY_RECT, VC_FILL_RECT,
+  VC_NUM_PATCH, VC_NUM_PATCH_PRECISE,
+  VC_FILL_FLAT, VC_FILL_PATCH,
+  VC_BACKGROUND, VC_SHADED,
+  VC_PLOT_PIXEL, VC_PLOT_PIXEL_WU,
+  VC_LINE, VC_LINE_WU,
+  VC_SET_PALETTE,
+} vcmd_type_t;
+
+typedef struct {
+  vcmd_type_t type;
+  union {
+    struct { int srcscrn, destscrn, x, y, width, height, flags; } copy_rect;
+    struct { int scrn, x, y, width, height; byte colour; } fill_rect;
+    struct { int x, y, scrn, lump, cm, flags; dboolean center; } patch;
+    struct { float x, y; int scrn, lump, cm, flags; dboolean center; } patchf;
+    struct { int lump, scrn, x, y, width, height, flags; } fill;
+    struct { char flatname[16]; int scrn; } background;
+    struct { int scrn, x, y, width, height, shade; } shaded;
+    struct { int scrn, x, y, weight; byte color; } pixel;
+    struct { fline_t fl; int color; } line;
+    struct { int pal; } palette;
+  } u;
+} vcmd_t;
+
+static vcmd_t *V_Push(vcmd_type_t type);
+
+static vcmd_t *v_cmds;
+static int v_cmd_count, v_cmd_max;
+static dboolean v_recording;
+
+// The real entries, taken when recording starts and put back when it ends.
+static struct {
+  V_BeginUIDraw_f begin_ui;
+  V_EndUIDraw_f end_ui;
+  V_BeginAutomapDraw_f begin_automap;
+  V_EndAutomapDraw_f end_automap;
+  V_BeginMenuDraw_f begin_menu;
+  V_EndMenuDraw_f end_menu;
+  V_CopyRect_f copy_rect;
+  V_FillRect_f fill_rect;
+  V_DrawNumPatchGen_f patch;
+  V_DrawNumPatchGenPrecise_f patchf;
+  V_FillFlat_f fill_flat;
+  V_FillPatch_f fill_patch;
+  V_DrawBackground_f background;
+  V_DrawShaded_f shaded;
+  V_PlotPixel_f pixel;
+  V_PlotPixelWu_f pixel_wu;
+  V_DrawLine_f line;
+  V_DrawLineWu_f line_wu;
+} v_real;
+
+static vcmd_t *V_Push(vcmd_type_t type)
+{
+  if (v_cmd_count == v_cmd_max)
+  {
+    v_cmd_max = v_cmd_max ? v_cmd_max * 2 : 256;
+    v_cmds = Z_Realloc(v_cmds, v_cmd_max * sizeof(*v_cmds));
+  }
+
+  v_cmds[v_cmd_count].type = type;
+
+  return &v_cmds[v_cmd_count++];
+}
+
+static void REC_BeginUIDraw(void) { V_Push(VC_BEGIN_UI); }
+static void REC_EndUIDraw(void) { V_Push(VC_END_UI); }
+static void REC_BeginAutomapDraw(void) { V_Push(VC_BEGIN_AUTOMAP); }
+static void REC_EndAutomapDraw(void) { V_Push(VC_END_AUTOMAP); }
+static void REC_BeginMenuDraw(void) { V_Push(VC_BEGIN_MENU); }
+static void REC_EndMenuDraw(void) { V_Push(VC_END_MENU); }
+
+static void REC_CopyRect(int srcscrn, int destscrn, int x, int y,
+                         int width, int height, enum patch_translation_e flags)
+{
+  vcmd_t *c = V_Push(VC_COPY_RECT);
+  c->u.copy_rect.srcscrn = srcscrn;
+  c->u.copy_rect.destscrn = destscrn;
+  c->u.copy_rect.x = x;
+  c->u.copy_rect.y = y;
+  c->u.copy_rect.width = width;
+  c->u.copy_rect.height = height;
+  c->u.copy_rect.flags = flags;
+}
+
+static void REC_FillRect(int scrn, int x, int y, int width, int height, byte colour)
+{
+  vcmd_t *c = V_Push(VC_FILL_RECT);
+  c->u.fill_rect.scrn = scrn;
+  c->u.fill_rect.x = x;
+  c->u.fill_rect.y = y;
+  c->u.fill_rect.width = width;
+  c->u.fill_rect.height = height;
+  c->u.fill_rect.colour = colour;
+}
+
+static void REC_DrawNumPatch(int x, int y, int scrn, int lump, dboolean center,
+                             int cm, enum patch_translation_e flags)
+{
+  vcmd_t *c = V_Push(VC_NUM_PATCH);
+  c->u.patch.x = x;
+  c->u.patch.y = y;
+  c->u.patch.scrn = scrn;
+  c->u.patch.lump = lump;
+  c->u.patch.center = center;
+  c->u.patch.cm = cm;
+  c->u.patch.flags = flags;
+}
+
+static void REC_DrawNumPatchPrecise(float x, float y, int scrn, int lump,
+                                    dboolean center, int cm,
+                                    enum patch_translation_e flags)
+{
+  vcmd_t *c = V_Push(VC_NUM_PATCH_PRECISE);
+  c->u.patchf.x = x;
+  c->u.patchf.y = y;
+  c->u.patchf.scrn = scrn;
+  c->u.patchf.lump = lump;
+  c->u.patchf.center = center;
+  c->u.patchf.cm = cm;
+  c->u.patchf.flags = flags;
+}
+
+static void REC_Fill(vcmd_type_t type, int lump, int scrn, int x, int y,
+                     int width, int height, enum patch_translation_e flags)
+{
+  vcmd_t *c = V_Push(type);
+  c->u.fill.lump = lump;
+  c->u.fill.scrn = scrn;
+  c->u.fill.x = x;
+  c->u.fill.y = y;
+  c->u.fill.width = width;
+  c->u.fill.height = height;
+  c->u.fill.flags = flags;
+}
+
+static void REC_FillFlat(int lump, int scrn, int x, int y, int width, int height,
+                         enum patch_translation_e flags)
+{
+  REC_Fill(VC_FILL_FLAT, lump, scrn, x, y, width, height, flags);
+}
+
+static void REC_FillPatch(int lump, int scrn, int x, int y, int width, int height,
+                          enum patch_translation_e flags)
+{
+  REC_Fill(VC_FILL_PATCH, lump, scrn, x, y, width, height, flags);
+}
+
+static void REC_DrawBackground(const char *flatname, int scrn)
+{
+  // Copied, not referenced: replay happens after the caller's frame is gone.
+  vcmd_t *c = V_Push(VC_BACKGROUND);
+  strncpy(c->u.background.flatname, flatname, sizeof(c->u.background.flatname) - 1);
+  c->u.background.flatname[sizeof(c->u.background.flatname) - 1] = '\0';
+  c->u.background.scrn = scrn;
+}
+
+static void REC_DrawShaded(int scrn, int x, int y, int width, int height, int shade)
+{
+  vcmd_t *c = V_Push(VC_SHADED);
+  c->u.shaded.scrn = scrn;
+  c->u.shaded.x = x;
+  c->u.shaded.y = y;
+  c->u.shaded.width = width;
+  c->u.shaded.height = height;
+  c->u.shaded.shade = shade;
+}
+
+static void REC_PlotPixel(int scrn, int x, int y, byte color)
+{
+  vcmd_t *c = V_Push(VC_PLOT_PIXEL);
+  c->u.pixel.scrn = scrn;
+  c->u.pixel.x = x;
+  c->u.pixel.y = y;
+  c->u.pixel.color = color;
+}
+
+static void REC_PlotPixelWu(int scrn, int x, int y, byte color, int weight)
+{
+  vcmd_t *c = V_Push(VC_PLOT_PIXEL_WU);
+  c->u.pixel.scrn = scrn;
+  c->u.pixel.x = x;
+  c->u.pixel.y = y;
+  c->u.pixel.color = color;
+  c->u.pixel.weight = weight;
+}
+
+static dboolean V_RecordPalette(int pal)
+{
+  if (!v_recording)
+    return false;
+
+  V_Push(VC_SET_PALETTE)->u.palette.pal = pal;
+
+  return true;
+}
+
+static void REC_DrawLine(fline_t *fl, int color)
+{
+  vcmd_t *c = V_Push(VC_LINE);
+  c->u.line.fl = *fl;
+  c->u.line.color = color;
+}
+
+static void REC_DrawLineWu(fline_t *fl, int color)
+{
+  vcmd_t *c = V_Push(VC_LINE_WU);
+  c->u.line.fl = *fl;
+  c->u.line.color = color;
+}
+
+void V_BeginRecording(void)
+{
+  v_cmd_count = 0;
+
+  v_real.begin_ui = V_BeginUIDraw;
+  v_real.end_ui = V_EndUIDraw;
+  v_real.begin_automap = V_BeginAutomapDraw;
+  v_real.end_automap = V_EndAutomapDraw;
+  v_real.begin_menu = V_BeginMenuDraw;
+  v_real.end_menu = V_EndMenuDraw;
+  v_real.copy_rect = V_CopyRect;
+  v_real.fill_rect = V_FillRect;
+  v_real.patch = V_DrawNumPatchGen;
+  v_real.patchf = V_DrawNumPatchGenPrecise;
+  v_real.fill_flat = V_FillFlat;
+  v_real.fill_patch = V_FillPatch;
+  v_real.background = V_DrawBackground;
+  v_real.shaded = V_DrawShaded;
+  v_real.pixel = V_PlotPixel;
+  v_real.pixel_wu = V_PlotPixelWu;
+  v_real.line = V_DrawLine;
+  v_real.line_wu = V_DrawLineWu;
+
+  V_BeginUIDraw = REC_BeginUIDraw;
+  V_EndUIDraw = REC_EndUIDraw;
+  V_BeginAutomapDraw = REC_BeginAutomapDraw;
+  V_EndAutomapDraw = REC_EndAutomapDraw;
+  V_BeginMenuDraw = REC_BeginMenuDraw;
+  V_EndMenuDraw = REC_EndMenuDraw;
+  V_CopyRect = REC_CopyRect;
+  V_FillRect = REC_FillRect;
+  V_DrawNumPatchGen = REC_DrawNumPatch;
+  V_DrawNumPatchGenPrecise = REC_DrawNumPatchPrecise;
+  V_FillFlat = REC_FillFlat;
+  V_FillPatch = REC_FillPatch;
+  V_DrawBackground = REC_DrawBackground;
+  V_DrawShaded = REC_DrawShaded;
+  V_PlotPixel = REC_PlotPixel;
+  V_PlotPixelWu = REC_PlotPixelWu;
+  V_DrawLine = REC_DrawLine;
+  V_DrawLineWu = REC_DrawLineWu;
+
+  v_recording = true;
+}
+
+void V_EndRecording(void)
+{
+  if (!v_recording)
+    return;
+
+  V_BeginUIDraw = v_real.begin_ui;
+  V_EndUIDraw = v_real.end_ui;
+  V_BeginAutomapDraw = v_real.begin_automap;
+  V_EndAutomapDraw = v_real.end_automap;
+  V_BeginMenuDraw = v_real.begin_menu;
+  V_EndMenuDraw = v_real.end_menu;
+  V_CopyRect = v_real.copy_rect;
+  V_FillRect = v_real.fill_rect;
+  V_DrawNumPatchGen = v_real.patch;
+  V_DrawNumPatchGenPrecise = v_real.patchf;
+  V_FillFlat = v_real.fill_flat;
+  V_FillPatch = v_real.fill_patch;
+  V_DrawBackground = v_real.background;
+  V_DrawShaded = v_real.shaded;
+  V_PlotPixel = v_real.pixel;
+  V_PlotPixelWu = v_real.pixel_wu;
+  V_DrawLine = v_real.line;
+  V_DrawLineWu = v_real.line_wu;
+
+  v_recording = false;
+}
+
+dboolean V_IsRecording(void)
+{
+  return v_recording;
+}
+
+void V_ReplayRecording(void)
+{
+  int i;
+
+  for (i = 0; i < v_cmd_count; i++)
+  {
+    vcmd_t *c = &v_cmds[i];
+
+    switch (c->type)
+    {
+    case VC_BEGIN_UI: v_real.begin_ui(); break;
+    case VC_END_UI: v_real.end_ui(); break;
+    case VC_BEGIN_AUTOMAP: v_real.begin_automap(); break;
+    case VC_END_AUTOMAP: v_real.end_automap(); break;
+    case VC_BEGIN_MENU: v_real.begin_menu(); break;
+    case VC_END_MENU: v_real.end_menu(); break;
+    case VC_COPY_RECT:
+      v_real.copy_rect(c->u.copy_rect.srcscrn, c->u.copy_rect.destscrn,
+                       c->u.copy_rect.x, c->u.copy_rect.y, c->u.copy_rect.width,
+                       c->u.copy_rect.height, c->u.copy_rect.flags);
+      break;
+    case VC_FILL_RECT:
+      v_real.fill_rect(c->u.fill_rect.scrn, c->u.fill_rect.x, c->u.fill_rect.y,
+                       c->u.fill_rect.width, c->u.fill_rect.height,
+                       c->u.fill_rect.colour);
+      break;
+    case VC_NUM_PATCH:
+      v_real.patch(c->u.patch.x, c->u.patch.y, c->u.patch.scrn, c->u.patch.lump,
+                   c->u.patch.center, c->u.patch.cm, c->u.patch.flags);
+      break;
+    case VC_NUM_PATCH_PRECISE:
+      v_real.patchf(c->u.patchf.x, c->u.patchf.y, c->u.patchf.scrn,
+                    c->u.patchf.lump, c->u.patchf.center, c->u.patchf.cm,
+                    c->u.patchf.flags);
+      break;
+    case VC_FILL_FLAT:
+      v_real.fill_flat(c->u.fill.lump, c->u.fill.scrn, c->u.fill.x, c->u.fill.y,
+                       c->u.fill.width, c->u.fill.height, c->u.fill.flags);
+      break;
+    case VC_FILL_PATCH:
+      v_real.fill_patch(c->u.fill.lump, c->u.fill.scrn, c->u.fill.x, c->u.fill.y,
+                        c->u.fill.width, c->u.fill.height, c->u.fill.flags);
+      break;
+    case VC_BACKGROUND:
+      v_real.background(c->u.background.flatname, c->u.background.scrn);
+      break;
+    case VC_SHADED:
+      v_real.shaded(c->u.shaded.scrn, c->u.shaded.x, c->u.shaded.y,
+                    c->u.shaded.width, c->u.shaded.height, c->u.shaded.shade);
+      break;
+    case VC_PLOT_PIXEL:
+      v_real.pixel(c->u.pixel.scrn, c->u.pixel.x, c->u.pixel.y, c->u.pixel.color);
+      break;
+    case VC_PLOT_PIXEL_WU:
+      v_real.pixel_wu(c->u.pixel.scrn, c->u.pixel.x, c->u.pixel.y,
+                      c->u.pixel.color, c->u.pixel.weight);
+      break;
+    case VC_LINE:
+      v_real.line(&c->u.line.fl, c->u.line.color);
+      break;
+    case VC_LINE_WU:
+      v_real.line_wu(&c->u.line.fl, c->u.line.color);
+      break;
+    case VC_SET_PALETTE:
+      if (V_IsOpenGLMode())
+        gld_SetPalette(c->u.palette.pal);
+      else
+        I_SetPalette(c->u.palette.pal);
+      break;
+    }
   }
 }
 

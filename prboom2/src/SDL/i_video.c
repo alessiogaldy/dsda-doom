@@ -813,8 +813,11 @@ void I_HandleCapture(void)
   if (queue_frame_hash)
   {
     // Deliberately on stdout and machine-readable: the harness parses this.
-    lprintf(LO_INFO, "FRAMEHASH tic=%d hash=%016llx\n",
-            gametic, I_HashScreen());
+    // The timestamp and frame count are here so a benchmark can measure a
+    // window inside one run -- differencing two separate runs folds in each
+    // one's startup noise, which is larger than the effects being measured.
+    lprintf(LO_INFO, "FRAMEHASH tic=%d hash=%016llx ms=%u frames=%d\n",
+            gametic, I_HashScreen(), (unsigned) SDL_GetTicks(), r_frame_count);
     if (frame_hash_png)
       M_DoScreenShot(frame_hash_png);
     queue_frame_hash = false;

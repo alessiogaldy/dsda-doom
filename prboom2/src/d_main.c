@@ -398,6 +398,7 @@ typedef struct
   dboolean automap;
   dboolean restore_in_draw;   // automap reads interpolated positions
   dboolean draw_pause;
+  dboolean recorded_ui;       // status bar, HUD and menu are in the command list
 
 
   // What the draw phase renders the weapon, status bar and HUD from. Copying
@@ -410,6 +411,42 @@ typedef struct
 } d_frame_t;
 
 static d_frame_t d_frame;
+
+// The 2D half of the frame: everything drawn over the finished scene. Called
+// either on the main thread with the V_ table recording (the usual case, so it
+// can read the live player the way it always has) or inline in the draw phase
+// on the frames that do not overlap.
+static void D_DrawFrameUI(d_frame_t *f)
+{
+  if (f->in_level)
+  {
+    DSDA_ADD_CONTEXT(sf_status_bar);
+    ST_Drawer(f->st_refresh);
+    DSDA_REMOVE_CONTEXT(sf_status_bar);
+
+    if (f->border_after_view)
+      R_DrawViewBorder();
+
+    DSDA_ADD_CONTEXT(sf_hud);
+    HU_Drawer();
+    DSDA_REMOVE_CONTEXT(sf_hud);
+  }
+
+  // draw pause pic
+  if (f->draw_pause) {
+    D_DrawPause();
+  }
+
+  V_BeginMenuDraw();
+  if (M_MenuIsShaded())
+    M_ShadedScreen(0);
+  V_EndMenuDraw();
+
+  // menus go directly to the screen
+  M_Drawer();          // menu is drawn even on top of everything
+
+  HU_DrawDemoProgress(true); //e6y
+}
 
 static dboolean D_BuildFrame(fixed_t frac)
 {
@@ -551,6 +588,19 @@ static dboolean D_BuildFrame(fixed_t frac)
   // draw pause pic
   f->draw_pause = (dsda_Paused() && (menuactive != mnact_full));
 
+  // Record the 2D half here, on the thread the simulation runs on, so it reads
+  // the live player at the point in the frame it always has. The draw phase
+  // replays it after the scene. The automap is excluded because am_map issues
+  // GL directly rather than through the V_ table, and those frames do not
+  // overlap anyway.
+  if (f->in_level && !f->automap && V_IsOpenGLMode())
+  {
+    V_BeginRecording();
+    D_DrawFrameUI(f);
+    V_EndRecording();
+    f->recorded_ui = true;
+  }
+
   return true;
 }
 
@@ -620,33 +670,12 @@ static void D_DrawFrame(void)
 
     if (f->restore_in_draw)
       R_RestoreInterpolations();
-
-    DSDA_ADD_CONTEXT(sf_status_bar);
-    ST_Drawer(f->st_refresh);
-    DSDA_REMOVE_CONTEXT(sf_status_bar);
-
-    if (f->border_after_view)
-      R_DrawViewBorder();
-
-    DSDA_ADD_CONTEXT(sf_hud);
-    HU_Drawer();
-    DSDA_REMOVE_CONTEXT(sf_hud);
   }
 
-  // draw pause pic
-  if (f->draw_pause) {
-    D_DrawPause();
-  }
-
-  V_BeginMenuDraw();
-  if (M_MenuIsShaded())
-    M_ShadedScreen(0);
-  V_EndMenuDraw();
-
-  // menus go directly to the screen
-  M_Drawer();          // menu is drawn even on top of everything
-
-  HU_DrawDemoProgress(true); //e6y
+  if (f->recorded_ui)
+    V_ReplayRecording();
+  else
+    D_DrawFrameUI(f);
 
   // normal update
   if (!f->wipe)
@@ -751,7 +780,13 @@ static void D_CheckFrameHash(void)
     // One tic past the last capture: the frame was fingerprinted during the
     // previous D_Display, so there is nothing left to render.
     if (count > 0 && gametic > tics[count - 1])
+    {
+      // Frames rather than elapsed time, because a plain -playdemo runs at
+      // 35 tics a second whatever the renderer does: the wall clock to a given
+      // tic is fixed, and how many frames fitted into it is the measurement.
+      lprintf(LO_INFO, "FRAMES tic=%d count=%d\n", gametic, r_frame_count);
       I_SafeExit(0);
+    }
     return;
   }
 
