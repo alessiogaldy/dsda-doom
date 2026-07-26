@@ -109,6 +109,7 @@ typedef enum {
   dsda_arg_nomusic,
   dsda_arg_nosfx,
   dsda_arg_nodraw,
+  dsda_arg_render_thread,
   dsda_arg_nodeh,
   dsda_arg_nomapinfo,
   dsda_arg_noautoload,

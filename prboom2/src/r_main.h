@@ -148,7 +148,10 @@ angle_t R_PointToPseudoAngle(fixed_t x, fixed_t y);
 //
 
 void R_ResetColorMap(void);
-void R_RenderPlayerView(player_t *player);   // Called by G_Drawer.
+// The two halves of the frame. R_BuildPlayerView issues no GL and stays on the
+// main thread; R_DrawPlayerView is GL only and runs wherever the context lives.
+void R_BuildPlayerView(player_t *player);
+void R_DrawPlayerView(player_t *player);
 void R_Init(void);                           // Called by startup code.
 void R_SetViewSize(void);              // Called by M_Responder.
 void R_ExecuteSetViewSize(void);             // cph - called by D_Display to complete a view resize

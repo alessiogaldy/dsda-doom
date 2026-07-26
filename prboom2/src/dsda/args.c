@@ -494,6 +494,12 @@ static arg_config_t arg_config[dsda_arg_count] = {
     "turn off drawing",
     arg_null,
   },
+  [dsda_arg_render_thread] = {
+    "-render_thread", NULL, NULL,
+    "draw on a second thread, overlapping the next tic's simulation "
+    "with this frame's rendering (OpenGL only)",
+    arg_null,
+  },
   [dsda_arg_nodeh] = {
     "-nodeh", NULL, NULL,
     "skip dehacked lumps inside wads",

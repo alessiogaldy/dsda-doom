@@ -76,7 +76,7 @@ tic_vars_t tic_vars;
 
 static void R_DoAnInterpolation (int i, fixed_t smoothratio);
 
-void D_Display(fixed_t frac);
+
 
 void M_ChangeUncappedFrameRate(void)
 {

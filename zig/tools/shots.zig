@@ -76,6 +76,10 @@ pub fn main(init: std.process.Init) !void {
     var bin: []const u8 = "zig-out/bin/dsda-doom";
     var baseline_path: []const u8 = default_baseline;
     var save = false;
+    // Passed through to the game. The point of the check is comparing two ways
+    // of producing the same frame, so the switch under test goes here rather
+    // than into the fixed argv below.
+    var game_args: std.ArrayList([]const u8) = .empty;
 
     var i: usize = 1;
     while (i < args.len) : (i += 1) {
@@ -88,9 +92,11 @@ pub fn main(init: std.process.Init) !void {
         } else if (std.mem.eql(u8, a, "--baseline") and i + 1 < args.len) {
             i += 1;
             baseline_path = args[i];
+        } else if (std.mem.startsWith(u8, a, "-") and !std.mem.startsWith(u8, a, "--")) {
+            try game_args.append(arena, a);
         } else {
             std.debug.print(
-                \\usage: shots [--bin PATH] [--baseline FILE] [--save]
+                \\usage: shots [--bin PATH] [--baseline FILE] [--save] [-gameflag...]
                 \\
             , .{});
             return error.InvalidArguments;
@@ -123,6 +129,7 @@ pub fn main(init: std.process.Init) !void {
             try argv.appendSlice(arena, &.{ "-nosound", "-nomusic" });
             try argv.appendSlice(arena, &.{ "-geom", "640x400w", "-vidmode", mode });
             try argv.appendSlice(arena, &.{ "-framehash", case.tics });
+            try argv.appendSlice(arena, game_args.items);
 
             const run = std.process.run(arena, io, .{ .argv = argv.items }) catch |err| {
                 std.debug.print("shots: failed to run {s}: {t}\n", .{ bin, err });

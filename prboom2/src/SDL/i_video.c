@@ -257,6 +257,19 @@ void I_StartRenderThread(void)
     return;
 
   render_thread_wanted = true;
+
+  // Moving or resizing the window marks the GL context dirty, and the next
+  // swap then updates it. [NSOpenGLContext update] has to run on the main
+  // thread, so SDL dispatches it there -- synchronously by default. Off the
+  // main thread that deadlocks us outright: the render thread blocks in
+  // dispatch_sync waiting for the main queue while the main thread is blocked
+  // in I_RenderFlush waiting for that very swap to finish. Neither ever wakes.
+  //
+  // This hint exists for exactly this case; it makes the dispatch async, so the
+  // update lands on the main thread a frame later instead of holding the render
+  // thread hostage.
+  SDL_SetHint(SDL_HINT_MAC_OPENGL_ASYNC_DISPATCH, "1");
+
   render_start = SDL_CreateSemaphore(0);
   render_finished = SDL_CreateSemaphore(0);
 
@@ -751,13 +764,19 @@ static dboolean queue_screenshot;
 static dboolean queue_frame_hash;
 static const char *frame_hash_png;
 
+// All three wait for the render thread first. These flags are consumed by
+// whichever frame reaches the swap next, so queueing one while a draw is still
+// in flight captures that frame instead of the one the caller meant -- which
+// looks exactly like a rendering difference, and is not one.
 void I_QueueFrameCapture(void)
 {
+  I_RenderFlush();
   queue_frame_capture = true;
 }
 
 void I_QueueScreenshot(void)
 {
+  I_RenderFlush();
   queue_screenshot = true;
 }
 
@@ -765,8 +784,16 @@ void I_QueueScreenshot(void)
 // difference can be looked at rather than only detected.
 void I_QueueFrameHash(const char *png_path)
 {
+  I_RenderFlush();
   queue_frame_hash = true;
   frame_hash_png = png_path;
+}
+
+// A frame carrying one of these is drawn synchronously, so that what it
+// captures is the frame the caller asked for and gametic still names it.
+dboolean I_CapturePending(void)
+{
+  return queue_frame_capture || queue_screenshot || queue_frame_hash;
 }
 
 void I_HandleCapture(void)

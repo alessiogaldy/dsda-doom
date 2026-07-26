@@ -109,6 +109,11 @@ void gld_PreprocessLevel(void);
 void gld_Set2DMode();
 void gld_InitDrawScene(void);
 void gld_StartDrawScene(void);
+// The two halves of gld_StartDrawScene. R_BuildPlayerView runs the CPU half and
+// R_DrawPlayerView the context half, so the frame's GL can be dispatched to the
+// render thread while the BSP walk stays on the main one.
+void gld_StartFrame(void);
+void gld_BeginFrameGL(void);
 void gld_AddPlane(int subsectornum, visplane_t *floor, visplane_t *ceiling);
 void gld_AddWall(seg_t *seg);
 void gld_ProjectSprite(mobj_t* thing, int lightlevel);

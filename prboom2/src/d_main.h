@@ -61,7 +61,7 @@ void D_DoAdvanceDemo (void);
 // BASE LEVEL
 //
 
-void D_Display(fixed_t frac);
+// D_Display is gone: the frame is built and drawn in two halves. See d_main.c.
 void D_DisplayFrame(fixed_t frac);
 void D_PageTicker(void);
 void D_StartTitle(void);

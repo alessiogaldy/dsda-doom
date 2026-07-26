@@ -71,6 +71,7 @@ void I_QueueFrameHash(const char *png_path);
 unsigned long long I_HashScreen(void);
 void I_QueueScreenshot(void);
 void I_HandleCapture(void);
+dboolean I_CapturePending(void);
 
 void I_FinishUpdate (void);
 

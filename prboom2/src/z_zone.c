@@ -49,6 +49,8 @@
 #include <stdlib.h>
 #include <stdio.h>
 
+#include "SDL_atomic.h"
+
 #include "z_zone.h"
 #include "doomstat.h"
 #include "v_video.h"
@@ -78,6 +80,17 @@ static const size_t HEADER_SIZE = sizeof(memblock_t);
 
 static memblock_t *blockbytag[ZONE_MAX];
 
+// The render thread allocates: gld_BindTexture composites a texture the first
+// time it is drawn, and that runs in the middle of the scene. malloc itself is
+// thread safe, but splicing two blocks into one tag list at the same time is
+// not, and what it produces is a corrupted malloc free list -- a crash inside
+// libmalloc with nothing in the backtrace to suggest a renderer problem.
+//
+// A spin lock rather than a mutex: the critical sections are a handful of
+// pointer writes, and SDL_SpinLock is a plain int needing no initialisation, so
+// it cannot get out of order with allocations that happen before main().
+static SDL_SpinLock zone_lock;
+
 /* Z_Malloc
  * cph - the algorithm here was a very simple first-fit round-robin
  *  one - just keep looping around, freeing everything we can until
@@ -100,6 +113,7 @@ static void *Z_MallocTag(size_t size, int tag)
     I_Error ("Z_Malloc: Failure trying to allocate %lu bytes", (unsigned long) size);
   }
 
+  SDL_AtomicLock(&zone_lock);
   if (!blockbytag[tag])
   {
     blockbytag[tag] = block;
@@ -112,6 +126,7 @@ static void *Z_MallocTag(size_t size, int tag)
     block->next = blockbytag[tag];
     blockbytag[tag]->prev = block;
   }
+  SDL_AtomicUnlock(&zone_lock);
 
   block->size = size;
   block->signature = ZONE_SIGNATURE;
@@ -132,6 +147,7 @@ void Z_Free(void *p)
     I_Error("Z_Free: freed a non-zone pointer");
   block->signature = 0;       // Nullify signature so another free fails
 
+  SDL_AtomicLock(&zone_lock);
   if (block == block->next)
     blockbytag[block->tag] = NULL;
   else
@@ -139,6 +155,7 @@ void Z_Free(void *p)
       blockbytag[block->tag] = block->next;
   block->prev->next = block->next;
   block->next->prev = block->prev;
+  SDL_AtomicUnlock(&zone_lock);
 
   free(block);
 }
