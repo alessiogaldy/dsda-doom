@@ -1195,6 +1195,117 @@ static void gld_AddDrawWallItem(GLDrawItemType itemtype, void *itemdata)
  *               *
  *****************/
 
+//
+// Wall batching
+//
+// A wall used to go out as its own glBegin/glEnd pair: eleven GL entry points
+// for one quad. They are already sorted by texture, so consecutive ones can be
+// accumulated into a vertex array and drawn with a single glDrawArrays.
+//
+// A batch has to break whenever per-draw state changes -- the texture, the
+// alpha, or the light level. Light is the limiting one: it is a shader uniform
+// rather than a vertex attribute, and it varies per sector rather than per
+// texture. Measured on Sunder map 21, 3675 walls a frame collapse to 1889
+// batches; they would collapse to 46 if only the texture mattered. Moving
+// light into a vertex attribute is what would close that gap.
+//
+typedef struct {
+  float x, y, z;
+  float u, v;
+} wall_vertex_t;
+
+static wall_vertex_t *wall_verts;
+static int wall_vert_count, wall_vert_max;
+
+// The fan being assembled. The edge splitters in gl_vertex.c append here too,
+// which is why gld_FanVertex is not static.
+static wall_vertex_t *fan_verts;
+static int fan_count, fan_max;
+
+static const GLTexture *batch_tex;
+static unsigned int batch_texflags;
+static float batch_light, batch_alpha;
+static dboolean batch_open;
+
+void gld_FanVertex(float x, float y, float z, float u, float v)
+{
+  wall_vertex_t *fv;
+
+  if (fan_count == fan_max)
+  {
+    fan_max = fan_max ? fan_max * 2 : 32;
+    fan_verts = Z_Realloc(fan_verts, fan_max * sizeof(*fan_verts));
+  }
+
+  fv = &fan_verts[fan_count++];
+  fv->x = x; fv->y = y; fv->z = z;
+  fv->u = u; fv->v = v;
+}
+
+static void gld_BatchVertex(const wall_vertex_t *v)
+{
+  if (wall_vert_count == wall_vert_max)
+  {
+    wall_vert_max = wall_vert_max ? wall_vert_max * 2 : 4096;
+    wall_verts = Z_Realloc(wall_verts, wall_vert_max * sizeof(*wall_verts));
+  }
+
+  wall_verts[wall_vert_count++] = *v;
+}
+
+// Emits the assembled fan as triangles, so every wall occupies the same
+// primitive type regardless of how many vertices its split edges added.
+static void gld_BatchFan(void)
+{
+  int i;
+
+  for (i = 1; i + 1 < fan_count; i++)
+  {
+    gld_BatchVertex(&fan_verts[0]);
+    gld_BatchVertex(&fan_verts[i]);
+    gld_BatchVertex(&fan_verts[i + 1]);
+  }
+
+  fan_count = 0;
+}
+
+void gld_FlushWalls(void)
+{
+  if (!wall_vert_count)
+  {
+    batch_open = false;
+    return;
+  }
+
+  gld_BindTexture((GLTexture *) batch_tex, batch_texflags, false);
+
+  if (!batch_tex)
+    glColor4f(1.0f, 0.0f, 0.0f, 1.0f);
+  else
+    gld_StaticLightAlpha(batch_light, batch_alpha);
+
+  // gld_DrawScene keeps the flats VBO bound across the whole scene, and while
+  // a buffer is bound the array pointers are offsets into it rather than
+  // addresses. Unbind for the draw and put it back afterwards, so the flat
+  // pointers the caller set up stay valid.
+  if (gl_ext_arb_vertex_buffer_object)
+    GLEXT_glBindBufferARB(GL_ARRAY_BUFFER, 0);
+
+  glVertexPointer(3, GL_FLOAT, sizeof(wall_vertex_t), &wall_verts[0].x);
+  glTexCoordPointer(2, GL_FLOAT, sizeof(wall_vertex_t), &wall_verts[0].u);
+  glDrawArrays(GL_TRIANGLES, 0, wall_vert_count);
+
+  if (gl_ext_arb_vertex_buffer_object)
+  {
+    GLEXT_glBindBufferARB(GL_ARRAY_BUFFER, flats_vbo_id);
+    glVertexPointer(3, GL_FLOAT, sizeof(flats_vbo[0]), flats_vbo_x);
+    glTexCoordPointer(2, GL_FLOAT, sizeof(flats_vbo[0]), flats_vbo_u);
+  }
+
+  wall_vert_count = 0;
+  batch_open = false;
+}
+
 static void gld_DrawWall(GLWall *wall)
 {
   unsigned int flags;
@@ -1208,16 +1319,17 @@ static void gld_DrawWall(GLWall *wall)
   else
     flags = 0;
 
-  gld_BindTexture(wall->gltexture, flags, false);
-
-  if (!wall->gltexture)
-  {
-    glColor4f(1.0f,0.0f,0.0f,1.0f);
-  }
-
   if ((wall->flag == GLDWF_TOPFLUD) || (wall->flag == GLDWF_BOTFLUD))
   {
     gl_strip_coords_t c;
+
+    // Stencil work and its own state: nothing here can share a batch.
+    gld_FlushWalls();
+
+    gld_BindTexture(wall->gltexture, flags, false);
+
+    if (!wall->gltexture)
+      glColor4f(1.0f, 0.0f, 0.0f, 1.0f);
 
     gld_BindFlat(wall->gltexture, 0);
 
@@ -1230,35 +1342,44 @@ static void gld_DrawWall(GLWall *wall)
   }
   else
   {
-    gld_StaticLightAlpha(wall->light, wall->alpha);
+    if (!batch_open || wall->gltexture != batch_tex || flags != batch_texflags ||
+        wall->light != batch_light || wall->alpha != batch_alpha)
+    {
+      gld_FlushWalls();
+      batch_tex = wall->gltexture;
+      batch_texflags = flags;
+      batch_light = wall->light;
+      batch_alpha = wall->alpha;
+      batch_open = true;
+    }
 
-    glBegin(GL_TRIANGLE_FAN);
+    fan_count = 0;
 
     // lower left corner
-    glTexCoord2f(wall->ul,wall->vb);
-    glVertex3f(wall->glseg->x1,wall->ybottom,wall->glseg->z1);
+    gld_FanVertex(wall->glseg->x1, wall->ybottom, wall->glseg->z1,
+                  wall->ul, wall->vb);
 
     // split left edge of wall
     if (!wall->glseg->fracleft)
       gld_SplitLeftEdge(wall);
 
     // upper left corner
-    glTexCoord2f(wall->ul,wall->vt);
-    glVertex3f(wall->glseg->x1,wall->ytop,wall->glseg->z1);
+    gld_FanVertex(wall->glseg->x1, wall->ytop, wall->glseg->z1,
+                  wall->ul, wall->vt);
 
     // upper right corner
-    glTexCoord2f(wall->ur,wall->vt);
-    glVertex3f(wall->glseg->x2,wall->ytop,wall->glseg->z2);
+    gld_FanVertex(wall->glseg->x2, wall->ytop, wall->glseg->z2,
+                  wall->ur, wall->vt);
 
     // split right edge of wall
     if (!wall->glseg->fracright)
       gld_SplitRightEdge(wall);
 
     // lower right corner
-    glTexCoord2f(wall->ur,wall->vb);
-    glVertex3f(wall->glseg->x2,wall->ybottom,wall->glseg->z2);
+    gld_FanVertex(wall->glseg->x2, wall->ybottom, wall->glseg->z2,
+                  wall->ur, wall->vb);
 
-    glEnd();
+    gld_BatchFan();
   }
 }
 
@@ -2590,6 +2711,7 @@ void gld_DrawProjectedWalls(GLDrawItemType itemtype)
 
       gld_ProcessWall(wall);
     }
+    gld_FlushWalls();
     glDisable(GL_STENCIL_TEST);
 
     glPolygonOffset(0.0f, 0.0f);
@@ -2658,6 +2780,7 @@ void gld_DrawScene(player_t *player)
   {
     gld_ProcessWall(gld_drawinfo_ready.items[GLDIT_WALL][i].item.wall);
   }
+  gld_FlushWalls();
 
   // masked geometry
   glEnable(GL_ALPHA_TEST);
@@ -2675,6 +2798,7 @@ void gld_DrawScene(player_t *player)
         gld_ProcessWall(wall);
       }
     }
+    gld_FlushWalls();
 
     // opaque mid walls with holes
 
@@ -2690,6 +2814,7 @@ void gld_DrawScene(player_t *player)
         gld_ProcessWall(wall);
       }
     }
+    gld_FlushWalls();
 
     glStencilFunc(GL_EQUAL, 1, ~0);
     glStencilOp(GL_KEEP, GL_KEEP, GL_KEEP);
@@ -2710,6 +2835,7 @@ void gld_DrawScene(player_t *player)
     {
       gld_ProcessWall(gld_drawinfo_ready.items[GLDIT_MWALL][i].item.wall);
     }
+    gld_FlushWalls();
   }
 
   // projected walls
@@ -2830,6 +2956,7 @@ void gld_DrawScene(player_t *player)
         glDepthMask(GL_FALSE);
         /* transparent wall is farther, draw it */
         gld_ProcessWall(gld_drawinfo_ready.items[GLDIT_TWALL][twall_idx].item.wall);
+        gld_FlushWalls();
         glDepthMask(GL_TRUE);
         twall_idx--;
       }

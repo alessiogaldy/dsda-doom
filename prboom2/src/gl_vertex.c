@@ -133,9 +133,7 @@ void gld_SplitLeftEdge(const GLWall *wall)
       GLfloat s = factu1 * (vi->heightlist[i] - wall->ytop) + wall->ul;
       GLfloat t = factv1 * (vi->heightlist[i] - wall->ytop) + wall->vt;
 
-      glTexCoord2f(s, t);
-
-      glVertex3f(wall->glseg->x1, vi->heightlist[i], wall->glseg->z1);
+      gld_FanVertex(wall->glseg->x1, vi->heightlist[i], wall->glseg->z1, s, t);
       i++;
     }
   }
@@ -174,9 +172,7 @@ void gld_SplitRightEdge(const GLWall *wall)
       GLfloat s = factu2 * (vi->heightlist[i] - wall->ytop) + wall->ur;
       GLfloat t = factv2 * (vi->heightlist[i] - wall->ytop) + wall->vt;
 
-      glTexCoord2f(s, t);
-
-      glVertex3f(wall->glseg->x2, vi->heightlist[i], wall->glseg->z2);
+      gld_FanVertex(wall->glseg->x2, vi->heightlist[i], wall->glseg->z2, s, t);
       i--;
     }
   }

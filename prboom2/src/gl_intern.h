@@ -383,6 +383,10 @@ void gld_Precache(void);
 void SetFrameTextureMode(void);
 
 //gl_vertex
+// Appends to the fan the wall batcher is assembling.
+void gld_FanVertex(float x, float y, float z, float u, float v);
+void gld_FlushWalls(void);
+
 void gld_SplitLeftEdge(const GLWall *wall);
 void gld_SplitRightEdge(const GLWall *wall);
 void gld_RecalcVertexHeights(const vertex_t *v);
