@@ -215,6 +215,16 @@ pub fn build(b: *std.Build) void {
 
     const exe = b.addExecutable(.{ .name = project_name, .root_module = mod });
 
+    // The game's own modules set sanitize_c = .off (Doom relies on signed
+    // overflow, misaligned reads and type punning), and so does every
+    // dependency we build ourselves. But zlib, SDL2 and SDL2_image come from
+    // external packages whose build scripts leave it at the default, so in
+    // Debug and ReleaseSafe they emit calls to __ubsan_handle_*. Nothing in
+    // the root module asks for the sanitizer, so without this the runtime is
+    // never linked and the whole build fails with undefined symbols.
+    // Harmless in release: nothing references the handlers, so it is dropped.
+    exe.bundle_ubsan_rt = true;
+
     // Off by default, unlike the CMake build dir which has
     // CMAKE_INTERPROCEDURAL_OPTIMIZATION=ON. ThinLTO combined with -ffast-math
     // lets the optimiser contract float operations across translation units,
