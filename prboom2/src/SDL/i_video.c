@@ -267,8 +267,15 @@ void I_StartRenderThread(void)
   //
   // This hint exists for exactly this case; it makes the dispatch async, so the
   // update lands on the main thread a frame later instead of holding the render
-  // thread hostage.
-  SDL_SetHint(SDL_HINT_MAC_OPENGL_ASYNC_DISPATCH, "1");
+  // thread hostage. The cost is that a window drag can smear for a frame, which
+  // is the right trade against a hang.
+  //
+  // Forced, because a plain SDL_SetHint loses to the environment: SDL_GetHint
+  // returns the environment value unless the stored hint was set at override
+  // priority. Someone with SDL_HINT_MAC_OPENGL_ASYNC_DISPATCH=0 exported would
+  // otherwise get the deadlock back, and nothing about the freeze would point
+  // at their environment.
+  SDL_SetHintWithPriority(SDL_HINT_MAC_OPENGL_ASYNC_DISPATCH, "1", SDL_HINT_OVERRIDE);
 
   render_start = SDL_CreateSemaphore(0);
   render_finished = SDL_CreateSemaphore(0);
