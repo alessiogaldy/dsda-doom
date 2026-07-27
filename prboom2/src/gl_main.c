@@ -1199,16 +1199,17 @@ static void gld_AddDrawWallItem(GLDrawItemType itemtype, void *itemdata)
 // for one quad. They are already sorted by texture, so consecutive ones can be
 // accumulated into a vertex array and drawn with a single glDrawArrays.
 //
-// A batch has to break whenever per-draw state changes -- the texture, the
-// alpha, or the light level. Light is the limiting one: it is a shader uniform
-// rather than a vertex attribute, and it varies per sector rather than per
-// texture. Measured on Sunder map 21, 3675 walls a frame collapse to 1889
-// batches; they would collapse to 46 if only the texture mattered. Moving
-// light into a vertex attribute is what would close that gap.
+// A batch has to break whenever per-draw state changes -- the texture or the
+// alpha. Light used to break batches too, and was by far the worst offender:
+// it varies per sector rather than per texture, so on Sunder map 21 the 3675
+// walls in a frame collapsed to 1889 batches where the texture alone would
+// have given 46. It is now a vertex attribute (see gls_v), so it no longer
+// splits anything.
 //
 typedef struct {
   float x, y, z;
   float u, v;
+  float light;
 } wall_vertex_t;
 
 static wall_vertex_t *wall_verts;
@@ -1221,8 +1222,18 @@ static int fan_count, fan_max;
 
 static const GLTexture *batch_tex;
 static unsigned int batch_texflags;
-static float batch_light, batch_alpha;
+static float batch_alpha;
 static dboolean batch_open;
+
+// Light for the vertices being emitted. Held here rather than passed down
+// because it is a property of the wall, and the edge splitters in gl_vertex.c
+// append vertices without knowing anything about it.
+static float fan_light;
+
+void gld_SetFanLight(float light)
+{
+  fan_light = gld_EffectiveLight(light);
+}
 
 void gld_FanVertex(float x, float y, float z, float u, float v)
 {
@@ -1237,6 +1248,7 @@ void gld_FanVertex(float x, float y, float z, float u, float v)
   fv = &fan_verts[fan_count++];
   fv->x = x; fv->y = y; fv->z = z;
   fv->u = u; fv->v = v;
+  fv->light = fan_light;
 }
 
 static void gld_BatchVertex(const wall_vertex_t *v)
@@ -1279,7 +1291,7 @@ void gld_FlushWalls(void)
   if (!batch_tex)
     glColor4f(1.0f, 0.0f, 0.0f, 1.0f);
   else
-    gld_StaticLightAlpha(batch_light, batch_alpha);
+    glColor4f(1.0f, 1.0f, 1.0f, batch_alpha);
 
   // gld_DrawScene keeps the flats VBO bound across the whole scene, and while
   // a buffer is bound the array pointers are offsets into it rather than
@@ -1290,7 +1302,20 @@ void gld_FlushWalls(void)
 
   glVertexPointer(3, GL_FLOAT, sizeof(wall_vertex_t), &wall_verts[0].x);
   glTexCoordPointer(2, GL_FLOAT, sizeof(wall_vertex_t), &wall_verts[0].u);
+
+  // Light per vertex on unit 1. Enabled only around this draw: every other
+  // caller relies on the current-value path in gld_StaticLightAlpha, which
+  // applies only while this array is disabled.
+  GLEXT_glClientActiveTextureARB(GL_TEXTURE1_ARB);
+  glTexCoordPointer(1, GL_FLOAT, sizeof(wall_vertex_t), &wall_verts[0].light);
+  glEnableClientState(GL_TEXTURE_COORD_ARRAY);
+  GLEXT_glClientActiveTextureARB(GL_TEXTURE0_ARB);
+
   glDrawArrays(GL_TRIANGLES, 0, wall_vert_count);
+
+  GLEXT_glClientActiveTextureARB(GL_TEXTURE1_ARB);
+  glDisableClientState(GL_TEXTURE_COORD_ARRAY);
+  GLEXT_glClientActiveTextureARB(GL_TEXTURE0_ARB);
 
   if (gl_ext_arb_vertex_buffer_object)
   {
@@ -1340,16 +1365,16 @@ static void gld_DrawWall(GLWall *wall)
   else
   {
     if (!batch_open || wall->gltexture != batch_tex || flags != batch_texflags ||
-        wall->light != batch_light || wall->alpha != batch_alpha)
+        wall->alpha != batch_alpha)
     {
       gld_FlushWalls();
       batch_tex = wall->gltexture;
       batch_texflags = flags;
-      batch_light = wall->light;
       batch_alpha = wall->alpha;
       batch_open = true;
     }
 
+    gld_SetFanLight(wall->light);
     fan_count = 0;
 
     // lower left corner

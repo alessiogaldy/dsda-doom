@@ -384,6 +384,7 @@ void SetFrameTextureMode(void);
 
 //gl_vertex
 // Appends to the fan the wall batcher is assembling.
+void gld_SetFanLight(float light);
 void gld_FanVertex(float x, float y, float z, float u, float v);
 void gld_FlushWalls(void);
 
@@ -431,6 +432,7 @@ void gld_SetupFloodedPlaneCoords(GLWall *wall, gl_strip_coords_t *c);
 void gld_SetupFloodedPlaneLight(GLWall *wall);
 
 //light
+float gld_EffectiveLight(float light);
 void gld_StaticLightAlpha(float light, float alpha);
 #define gld_StaticLight(light) gld_StaticLightAlpha(light, 1.0f)
 void gld_InitLightTable(void);
@@ -512,6 +514,5 @@ void glsl_PushMainShader(void);
 void glsl_PopMainShader(void);
 void glsl_PushFuzzShader(int tic, int sprite, float ratio);
 void glsl_PopFuzzShader(void);
-void glsl_SetLightLevel(float lightlevel);
 
 #endif // _GL_INTERN_H

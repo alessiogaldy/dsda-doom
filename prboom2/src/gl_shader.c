@@ -562,7 +562,6 @@ enum
 {
   MAIN_UNIF_TEX,
   MAIN_UNIF_COLORMAP,
-  MAIN_UNIF_LIGHTLEVEL,
   MAIN_UNIF_FADE_MODE
 };
 
@@ -586,7 +585,6 @@ static const shader_info_t main_info =
   {
     UNIF(MAIN_UNIF_TEX, "tex", UNIF_TEX0),
     UNIF(MAIN_UNIF_COLORMAP, "colormap", UNIF_TEX2),
-    UNIF(MAIN_UNIF_LIGHTLEVEL, "lightlevel", UNIF_1F),
     UNIF(MAIN_UNIF_FADE_MODE, "fade_mode", UNIF_1I),
     UNIF_END
   }
@@ -635,11 +633,6 @@ void glsl_PushMainShader(void)
 void glsl_PopMainShader(void)
 {
   glsl_ShaderPop(sh_main);
-}
-
-void glsl_SetLightLevel(float lightlevel)
-{
-  glsl_ShaderUniform(sh_main, MAIN_UNIF_LIGHTLEVEL, lightlevel);
 }
 
 void glsl_PushFuzzShader(int tic, int sprite, float ratio)

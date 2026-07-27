@@ -1,8 +1,17 @@
 #version 110
 
+// Light level rides in texture unit 1's s coordinate. Carrying it per vertex
+// rather than as a uniform is what lets the renderer batch geometry across
+// sector light changes; unit 1 is free (the main shader samples the texture on
+// unit 0 and the colormap on unit 2), and every driver we run on is required
+// to support ARB_multitexture. Draws that do not vary light per vertex leave
+// the unit 1 array disabled and set the current value once instead.
+varying float lightlevel;
+
 void main()
 {
   gl_FrontColor = gl_Color;
   gl_TexCoord[0] = gl_TextureMatrix[0] * gl_MultiTexCoord0;
+  lightlevel = gl_MultiTexCoord1.x;
   gl_Position = ftransform();
 }

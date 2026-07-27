@@ -18,7 +18,9 @@
 // to taste -- seems to match software pretty damn closely
 #define DOOMLIGHTFACTOR 200.0
 
-uniform float lightlevel;
+// Supplied per vertex by gls_v rather than as a uniform, so that geometry
+// with differing sector light can still share a draw call.
+varying float lightlevel;
 uniform sampler2D colormap;
 
 // Returns color index based on R texel component
