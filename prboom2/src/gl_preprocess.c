@@ -54,6 +54,7 @@
 #include "r_main.h"
 #include "am_map.h"
 #include "i_video.h"
+#include "i_render.h"
 #include "lprintf.h"
 
 static FILE *levelinfo;

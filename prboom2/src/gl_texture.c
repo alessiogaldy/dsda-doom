@@ -71,6 +71,7 @@
 #include "gl_struct.h"
 #include "p_spec.h"
 #include "i_video.h"
+#include "i_render.h"
 #include "e6y.h"
 
 #include "dsda/mapinfo.h"

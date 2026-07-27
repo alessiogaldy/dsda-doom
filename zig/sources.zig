@@ -230,6 +230,7 @@ pub const sdl_c = [_][]const u8{
     "SDL/i_sndfile.c",
     "SDL/i_sshot.c",
     "SDL/i_system.c",
+    "SDL/i_render.c",
     "SDL/i_video.c",
 };
 

@@ -178,10 +178,11 @@ pub fn build(b: *std.Build) void {
     const c_files = sources.common_c ++ sources.net_client_c ++ sources.mus2mid_c ++
         sources.sdl_c ++ sources.music_c ++ sources.gl_c;
 
-    // CMake compiles 244 objects for this target. If an upstream merge adds a
-    // source to prboom2/src/CMakeLists.txt without adding it to zig/sources.zig,
-    // this is the tripwire.
-    comptime std.debug.assert(c_files.len + sources.common_cpp.len + 1 == 244);
+    // CMake compiles 245 objects for this target -- upstream's 244 plus
+    // SDL/i_render.c. If an upstream merge adds a source to
+    // prboom2/src/CMakeLists.txt without adding it to zig/sources.zig, this is
+    // the tripwire.
+    comptime std.debug.assert(c_files.len + sources.common_cpp.len + 1 == 245);
 
     mod.addCSourceFiles(.{
         .root = b.path("prboom2/src"),
