@@ -160,6 +160,14 @@ typedef struct {
   void (*build_view)(player_t *player);
   void (*draw_view)(player_t *player);
 
+  // Start-of-frame setup, before the BSP walk.
+  void (*init_scene)(void);
+
+  // Recomputes anything derived from the view pitch. The software renderer
+  // rebuilds its projection tables; GL carries pitch in the view matrix and so
+  // has nothing to do.
+  void (*setup_freelook)(void);
+
   // Per-level setup. The GL renderer builds vertex buffers and texture state
   // for the map; the software renderer has nothing to prepare.
   void (*preprocess_level)(void);
@@ -193,6 +201,14 @@ typedef struct {
   // The UI has to be recorded during the build half and replayed after the
   // deferred scene draw, instead of being drawn directly.
   dboolean records_ui;
+
+  // The view matrix carries the pitch, so freelook does not need separate
+  // handling in the projection.
+  dboolean has_view_pitch;
+
+  // A view matrix is needed for every frame. The software renderer only builds
+  // one when something else asks for it, such as the crosshair.
+  dboolean needs_view_matrix;
 } view_renderer_t;
 
 const view_renderer_t *R_ViewRenderer(void);

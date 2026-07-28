@@ -599,7 +599,7 @@ void R_BuildModelViewMatrix(void)
   yaw = 270.0f - (float)(viewangle>>ANGLETOFINESHIFT) * 360.0f / FINEANGLES;
   yaw *= (float)M_PI / 180.0f;
   pitch = 0;
-  if (V_IsOpenGLMode())
+  if (R_ViewRenderer()->has_view_pitch)
   {
     pitch = (float)(viewpitch>>ANGLETOFINESHIFT) * 360.0f / FINEANGLES;
     pitch *= (float)M_PI / 180.0f;
@@ -769,8 +769,7 @@ void R_ExecuteSetViewSize (void)
   I_SetWindowRect();
   I_SetViewportRect();
 
-  if (V_IsOpenGLMode())
-    dsda_GLSetRenderViewportParams();
+  R_ViewRenderer()->set_viewport_params();
 
   dsda_InitExHud();
   dsda_BeginRenderStats();
@@ -867,32 +866,31 @@ void R_LineCenter(fixed_t *x, fixed_t *y, line_t *line)
 //
 // R_SetupFreelook
 //
+// Software only: these are the column-rasteriser's projection tables. The GL
+// renderer gets the same effect from the view matrix.
 
-void R_SetupFreelook(void)
+static void R_SoftSetupFreelook(void)
 {
-  if (V_IsSoftwareMode())
+  fixed_t InvZtoScale;
+  fixed_t dy;
+  int i;
+
+  centery = viewheight / 2;
+  if (raven || dsda_MouseLook())
   {
-    fixed_t InvZtoScale;
-    fixed_t dy;
-    int i;
+    dy = FixedMul(focallengthy, finetangent[(ANG90-viewpitch)>>ANGLETOFINESHIFT]);
+    centery += dy >> FRACBITS;
+  }
+  centeryfrac = centery<<FRACBITS;
 
-    centery = viewheight / 2;
-    if (raven || dsda_MouseLook())
-    {
-      dy = FixedMul(focallengthy, finetangent[(ANG90-viewpitch)>>ANGLETOFINESHIFT]);
-      centery += dy >> FRACBITS;
-    }
-    centeryfrac = centery<<FRACBITS;
+  InvZtoScale = yaspectmul * centerx;
+  globaluclip = FixedDiv (-centeryfrac, InvZtoScale);
+  globaldclip = FixedDiv ((viewheight<<FRACBITS)-centeryfrac, InvZtoScale);
 
-    InvZtoScale = yaspectmul * centerx;
-    globaluclip = FixedDiv (-centeryfrac, InvZtoScale);
-    globaldclip = FixedDiv ((viewheight<<FRACBITS)-centeryfrac, InvZtoScale);
-
-    for (i=0; i<viewheight; i++)
-    {
-      dy = D_abs(((i-centery)<<FRACBITS)+FRACUNIT/2);
-      yslope[i] = FixedDiv(projectiony, dy);
-    }
+  for (i=0; i<viewheight; i++)
+  {
+    dy = D_abs(((i-centery)<<FRACBITS)+FRACUNIT/2);
+    yslope[i] = FixedDiv(projectiony, dy);
   }
 }
 
@@ -952,7 +950,7 @@ static void R_SetupFrame (player_t *player)
   viewtansin = FixedMul(FocalTangent, viewsin);
   viewtancos = FixedMul(FocalTangent, viewcos);
 
-  R_SetupFreelook();
+  R_ViewRenderer()->setup_freelook();
 
   // killough 3/20/98, 4/4/98: select colormap based on player status
 
@@ -1002,49 +1000,49 @@ static void R_SetupFrame (player_t *player)
 
   R_SetClipPlanes();
 
-  if (V_IsOpenGLMode() || HU_CrosshairEnabled())
+  if (R_ViewRenderer()->needs_view_matrix || HU_CrosshairEnabled())
     R_SetupMatrix();
 
   validcount++;
 }
 
-static void R_InitDrawScene(void)
+static void R_GLInitScene(void)
+{
+  // proff 11/99: clear buffers
+  gld_InitDrawScene();
+
+  if (!automap_on)
+  {
+    // proff 11/99: switch to perspective mode
+    //
+    // CPU half only. The context half is gld_BeginFrameGL, which the draw
+    // phase runs; nothing between here and there needs the GL state it sets.
+    gld_StartFrame();
+  }
+}
+
+static void R_SoftInitScene(void)
 {
   // Framerate-independent fuzz progression
   static int fuzzgametic = 0;
   static int savedfuzzpos = 0;
 
-  if (V_IsOpenGLMode())
+  if (dsda_IntConfig(dsda_config_flashing_hom))
+  { // killough 2/10/98: add flashing red HOM indicators
+    unsigned char color=(gametic % 20) < 9 ? 0xb0 : 0;
+    V_FillRect(0, 0, 0, viewwidth, viewheight, color);
+    R_DrawViewBorder();
+  }
+
+  // Only progress software fuzz offset if the gametic has progressed
+  if (fuzzgametic != gametic)
   {
-    // proff 11/99: clear buffers
-    gld_InitDrawScene();
-
-    if (!automap_on)
-    {
-      // proff 11/99: switch to perspective mode
-      //
-      // CPU half only. The context half is gld_BeginFrameGL, which the draw
-      // phase runs; nothing between here and there needs the GL state it sets.
-      gld_StartFrame();
-    }
-  } else {
-    if (dsda_IntConfig(dsda_config_flashing_hom))
-    { // killough 2/10/98: add flashing red HOM indicators
-      unsigned char color=(gametic % 20) < 9 ? 0xb0 : 0;
-      V_FillRect(0, 0, 0, viewwidth, viewheight, color);
-      R_DrawViewBorder();
-    }
-
-    // Only progress software fuzz offset if the gametic has progressed
-    if (fuzzgametic != gametic)
-    {
-      fuzzgametic = gametic;
-      savedfuzzpos = R_GetFuzzPos();
-    }
-    else
-    {
-      R_SetFuzzPos(savedfuzzpos);
-    }
+    fuzzgametic = gametic;
+    savedfuzzpos = R_GetFuzzPos();
+  }
+  else
+  {
+    R_SetFuzzPos(savedfuzzpos);
   }
 }
 
@@ -1063,10 +1061,6 @@ static void R_RenderBSPNodes(void)
     R_RenderBSPNode(numnodes - 1);
   }
 
-  if (map_format.zdoom && V_IsOpenGLMode())
-  {
-    R_ForceRenderPolyObjs();
-  }
 }
 
 //
@@ -1096,6 +1090,8 @@ static void R_GLBuildView(player_t *player)
 
   DSDA_ADD_CONTEXT(sf_bsp_nodes);
   R_RenderBSPNodes();
+  if (map_format.zdoom)
+    R_ForceRenderPolyObjs();
   DSDA_REMOVE_CONTEXT(sf_bsp_nodes);
 
   // The BSP walk is the only thing that adds to the draw list, so the scene is
@@ -1192,6 +1188,8 @@ static void R_SoftNoop(void)
 static const view_renderer_t gl_view_renderer = {
   .build_view          = R_GLBuildView,
   .draw_view           = R_GLDrawView,
+  .init_scene          = R_GLInitScene,
+  .setup_freelook      = R_SoftNoop,
   .preprocess_level    = R_GLPreprocessLevel,
   .set_viewport_params = dsda_GLSetRenderViewportParams,
   .begin_wipe_frame    = R_GLBeginWipeFrame,
@@ -1200,11 +1198,15 @@ static const view_renderer_t gl_view_renderer = {
   .always_draw_border  = true,
   .border_after_view   = false,
   .records_ui          = true,
+  .has_view_pitch      = true,
+  .needs_view_matrix   = true,
 };
 
 static const view_renderer_t soft_view_renderer = {
   .build_view          = R_SoftBuildView,
   .draw_view           = R_SoftDrawView,
+  .init_scene          = R_SoftInitScene,
+  .setup_freelook      = R_SoftSetupFreelook,
   .preprocess_level    = R_SoftNoop,
   .set_viewport_params = R_SoftNoop,
   .begin_wipe_frame    = R_SoftNoop,
@@ -1213,6 +1215,8 @@ static const view_renderer_t soft_view_renderer = {
   .always_draw_border  = false,
   .border_after_view   = true,
   .records_ui          = false,
+  .has_view_pitch      = false,
+  .needs_view_matrix   = false,
 };
 
 // Resolved per call rather than latched at startup, because the video mode can
@@ -1239,7 +1243,7 @@ void R_BuildPlayerView (player_t* player)
   DSDA_REMOVE_CONTEXT(sf_clear);
 
   DSDA_ADD_CONTEXT(sf_init_scene);
-  R_InitDrawScene();
+  R_ViewRenderer()->init_scene();
   DSDA_REMOVE_CONTEXT(sf_init_scene);
 
   FakeNetUpdate();
