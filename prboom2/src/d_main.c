@@ -68,6 +68,7 @@
 #include "i_system.h"
 #include "i_sound.h"
 #include "i_video.h"
+#include "i_render.h"
 #include "g_game.h"
 #include "hu_stuff.h"
 #include "wi_stuff.h"
@@ -370,74 +371,143 @@ void D_MustFillBackScreen(void)
   must_fill_back_screen = true;
 }
 
-void D_Display (fixed_t frac)
+// The frame, split in two.
+//
+// D_BuildFrame decides what the frame contains and runs every part of it that
+// reads the playsim. D_DrawFrame issues the GL. They are separate because the
+// context lives on the render thread: a frame has to be fully decided before it
+// can be dispatched, and what it draws from must not be state the simulation is
+// concurrently changing.
+//
+// One buffer, not two. The next build waits for the previous draw (see
+// D_DisplayFrame), so the two never touch this at the same time.
+typedef struct
+{
+  gamestate_t gamestate;
+
+  dboolean display_started;   // I_StartDisplay was taken, so I_EndDisplay owes it
+  dboolean demo_progress;     // skip mode: progress bar, with a flip of its own
+  dboolean progress_only;     // ...and that bar is the whole frame
+  dboolean letterbox_clear;
+  dboolean wipe;
+  dboolean in_level;
+  dboolean reset_palette;
+  dboolean fill_back_screen;
+  dboolean draw_border;
+  dboolean border_after_view; // software redraws it over the finished view
+  dboolean st_refresh;
+  dboolean automap;
+  dboolean restore_in_draw;   // automap reads interpolated positions
+  dboolean draw_pause;
+  dboolean recorded_ui;       // status bar, HUD and menu are in the command list
+
+
+  // What the draw phase renders the weapon, status bar and HUD from. Copying
+  // the player and the mobj it points at is what lets the simulation run on
+  // while the frame is still being drawn. It is 1256 bytes -- against roughly
+  // 28MB for the whole-world snapshot a fully independent renderer would need
+  // on a map the size of Sunder's.
+  player_t player;
+  mobj_t player_mo;
+} d_frame_t;
+
+static d_frame_t d_frame;
+
+// The 2D half of the frame: everything drawn over the finished scene. Called
+// either on the main thread with the V_ table recording (the usual case, so it
+// can read the live player the way it always has) or inline in the draw phase
+// on the frames that do not overlap.
+static void D_DrawFrameUI(d_frame_t *f)
+{
+  if (f->in_level)
+  {
+    DSDA_ADD_CONTEXT(sf_status_bar);
+    ST_Drawer(f->st_refresh);
+    DSDA_REMOVE_CONTEXT(sf_status_bar);
+
+    if (f->border_after_view)
+      R_DrawViewBorder();
+
+    DSDA_ADD_CONTEXT(sf_hud);
+    HU_Drawer();
+    DSDA_REMOVE_CONTEXT(sf_hud);
+  }
+
+  // draw pause pic
+  if (f->draw_pause) {
+    D_DrawPause();
+  }
+
+  V_BeginMenuDraw();
+  if (M_MenuIsShaded())
+    M_ShadedScreen(0);
+  V_EndMenuDraw();
+
+  // menus go directly to the screen
+  M_Drawer();          // menu is drawn even on top of everything
+
+  HU_DrawDemoProgress(true); //e6y
+}
+
+static dboolean D_BuildFrame(fixed_t frac)
 {
   static dboolean isborderstate        = false;
   static dboolean borderwillneedredraw = false;
   static gamestate_t oldgamestate = GS_DEFAULT;
-  dboolean wipe;
   dboolean viewactive = false, isborder = false;
+  d_frame_t *f = &d_frame;
+
+  memset(f, 0, sizeof(*f));
 
   // e6y
   if (dsda_SkipMode())
   {
-    if (HU_DrawDemoProgress(false))
-      I_FinishUpdate();
+    f->demo_progress = true;
+
     if (!dsda_InputActive(dsda_input_use))
-      return;
+    {
+      f->progress_only = true;
+      return true;
+    }
 
     if (V_IsOpenGLMode())
     {
+      // Borrows the context back off the render thread, so it stays here.
       gld_PreprocessLevel();
     }
   }
 
   if (!dsda_SkipMode() || !dsda_InputActive(dsda_input_use))
     if (nodrawers)                    // for comparative timing / profiling
-      return;
+      return false;
 
   if (!I_StartDisplay())
-    return;
+    return false;
+
+  f->display_started = true;
 
   if (setsizeneeded) {               // change the view size if needed
     R_ExecuteSetViewSize();
     oldgamestate = GS_DEFAULT;            // force background redraw
   }
 
-  if (V_IsOpenGLMode() && !exclusive_fullscreen && !nodrawers)
-    dsda_GLLetterboxClear();
+  f->gamestate = gamestate;
+  f->in_level = (gamestate == GS_LEVEL);
+  f->letterbox_clear = (V_IsOpenGLMode() && !exclusive_fullscreen && !nodrawers);
+
 
   // save the current screen if about to wipe
-  if ((wipe = (gamestate != wipegamestate)))
-  {
-    wipe_StartScreen();
+  if ((f->wipe = (gamestate != wipegamestate)))
     R_ResetViewInterpolation();
-  }
 
-  if (gamestate != GS_LEVEL) { // Not a level
+  if (!f->in_level) { // Not a level
     switch (oldgamestate) {
     case GS_DEFAULT:
     case GS_LEVEL:
-      V_SetPalette(0); // cph - use default (basic) palette
+      f->reset_palette = true; // cph - use default (basic) palette
     default:
       break;
     }
-
-    V_BeginUIDraw();
-    switch (gamestate) {
-    case GS_INTERMISSION:
-      WI_Drawer();
-      break;
-    case GS_FINALE:
-      F_Drawer();
-      break;
-    case GS_DEMOSCREEN:
-      D_PageDrawer();
-      break;
-    default:
-      break;
-    }
-    V_EndUIDraw();
   }
   else { // In a level
     dboolean redrawborderstuff;
@@ -448,7 +518,7 @@ void D_Display (fixed_t frac)
 
     if (oldgamestate != GS_LEVEL || must_fill_back_screen) {
       must_fill_back_screen = false;
-      R_FillBackScreen ();    // draw the pattern into the back screen
+      f->fill_back_screen = true;  // draw the pattern into the back screen
       redrawborderstuff = isborder;
     } else {
       // CPhipps -
@@ -464,22 +534,19 @@ void D_Display (fixed_t frac)
       borderwillneedredraw = borderwillneedredraw || automap_on;
     }
 
-    if (redrawborderstuff || V_IsOpenGLMode()) {
-      // elim - Update viewport and scene offsets whenever the view is changed (user hits "-" or "+")
-      if (redrawborderstuff && V_IsOpenGLMode()) {
-        dsda_GLSetRenderViewportParams();
-      }
+    f->draw_border = (redrawborderstuff || V_IsOpenGLMode());
 
-      R_DrawViewBorder();
-    }
+    // elim - Update viewport and scene offsets whenever the view is changed (user hits "-" or "+")
+    if (redrawborderstuff && V_IsOpenGLMode())
+      dsda_GLSetRenderViewportParams();
 
     // elim - If we go from visible status bar to invisible status bar, update affected viewport params
-    if (!isborder && isborderstate) {
+    if (!isborder && isborderstate)
       dsda_GLUpdateStatusBarVisible();
-    }
 
     // e6y
-    // Boom colormaps should be applied for everything in R_RenderPlayerView
+    // Boom colormaps should be applied for everything in R_RenderPlayerView.
+    // The draw phase clears it again, so the bracket still spans the scene.
     use_boom_cm=true;
 
     if (frac < 0)
@@ -488,64 +555,169 @@ void D_Display (fixed_t frac)
     R_InterpolateView(&players[displayplayer], frac);
 
     DSDA_ADD_CONTEXT(sf_player_view);
-    R_RenderPlayerView(&players[displayplayer]);
+    R_BuildPlayerView(&players[displayplayer]);
     DSDA_REMOVE_CONTEXT(sf_player_view);
 
     dsda_UpdateRenderStats();
 
-    // e6y
-    // but should NOT be applied for automap, statusbar and HUD
-    use_boom_cm=false;
-    frame_fixedcolormap = 0;
+    f->automap = automap_active;
+    f->st_refresh = (redrawborderstuff || BorderNeedRefresh);
+    BorderNeedRefresh = false;
+    f->border_after_view = V_IsSoftwareMode();
 
-    if (automap_active)
+    // The copy the draw phase works from.
+    f->player = players[displayplayer];
+    if (f->player.mo)
     {
-      AM_Drawer(false);
+      f->player_mo = *f->player.mo;
+      f->player.mo = &f->player_mo;
     }
 
-    R_RestoreInterpolations();
-
-    DSDA_ADD_CONTEXT(sf_status_bar);
-    ST_Drawer(redrawborderstuff || BorderNeedRefresh);
-    DSDA_REMOVE_CONTEXT(sf_status_bar);
-
-    BorderNeedRefresh = false;
-    if (V_IsSoftwareMode())
-      R_DrawViewBorder();
-
-    DSDA_ADD_CONTEXT(sf_hud);
-    HU_Drawer();
-    DSDA_REMOVE_CONTEXT(sf_hud);
+    // Interpolation moves the world to where it should be drawn, so it has to
+    // be put back before the simulation runs again. The automap is the one
+    // consumer that reads the interpolated positions itself, so on those frames
+    // the restore waits until the draw is done -- which is why they don't
+    // overlap.
+    f->restore_in_draw = f->automap;
+    if (!f->restore_in_draw)
+      R_RestoreInterpolations();
   }
 
   isborderstate      = isborder;
   oldgamestate = wipegamestate = gamestate;
 
   // draw pause pic
-  if (dsda_Paused() && (menuactive != mnact_full)) {
-    D_DrawPause();
+  f->draw_pause = (dsda_Paused() && (menuactive != mnact_full));
+
+  // Record the 2D half here, on the thread the simulation runs on, so it reads
+  // the live player at the point in the frame it always has. The draw phase
+  // replays it after the scene. The automap is excluded because am_map issues
+  // GL directly rather than through the V_ table, and those frames do not
+  // overlap anyway.
+  if (f->in_level && !f->automap && V_IsOpenGLMode())
+  {
+    V_BeginRecording();
+    D_DrawFrameUI(f);
+    V_EndRecording();
+    f->recorded_ui = true;
   }
 
-  V_BeginMenuDraw();
-  if (M_MenuIsShaded())
-    M_ShadedScreen(0);
-  V_EndMenuDraw();
+  return true;
+}
 
-  // menus go directly to the screen
-  M_Drawer();          // menu is drawn even on top of everything
+static void D_DrawFrame(void)
+{
+  d_frame_t *f = &d_frame;
 
-  FakeNetUpdate();     // send out any new accumulation
+  // e6y
+  if (f->demo_progress)
+  {
+    if (HU_DrawDemoProgress(false))
+      I_FinishUpdate();
+    if (f->progress_only)
+      return;
+  }
 
-  HU_DrawDemoProgress(true); //e6y
+  if (f->letterbox_clear)
+    dsda_GLLetterboxClear();
+
+  if (f->wipe)
+    wipe_StartScreen();
+
+  if (!f->in_level) { // Not a level
+    if (f->reset_palette)
+      V_SetPalette(0);
+
+    V_BeginUIDraw();
+    switch (f->gamestate) {
+    case GS_INTERMISSION:
+      WI_Drawer();
+      break;
+    case GS_FINALE:
+      F_Drawer();
+      break;
+    case GS_DEMOSCREEN:
+      D_PageDrawer();
+      break;
+    default:
+      break;
+    }
+    V_EndUIDraw();
+  }
+  else { // In a level
+    if (f->fill_back_screen)
+      R_FillBackScreen();
+
+    if (f->draw_border)
+      R_DrawViewBorder();
+
+    // Everything below reads the player through here, so point it at the copy
+    // rather than the one the simulation is running on.
+    viewplayer = &f->player;
+
+    DSDA_ADD_CONTEXT(sf_player_view);
+    R_DrawPlayerView(&f->player);
+    DSDA_REMOVE_CONTEXT(sf_player_view);
+
+    // e6y
+    // but should NOT be applied for automap, statusbar and HUD
+    use_boom_cm=false;
+    frame_fixedcolormap = 0;
+
+    if (f->automap)
+    {
+      AM_Drawer(false);
+    }
+
+    if (f->restore_in_draw)
+      R_RestoreInterpolations();
+  }
+
+  if (f->recorded_ui)
+    V_ReplayRecording();
+  else
+    D_DrawFrameUI(f);
 
   // normal update
-  if (!wipe)
+  if (!f->wipe)
     I_FinishUpdate ();              // page flip or blit buffer
   else {
     // wipe update
     wipe_EndScreen();
     D_Wipe();
   }
+}
+
+// Build the frame here, then hand the drawing to whichever thread owns the GL
+// context and carry on. The wait for it is at the top of the next frame rather
+// than the bottom of this one -- everything the caller does in between is
+// simulation, which is the whole point.
+void D_DisplayFrame(fixed_t frac)
+{
+  dboolean sync;
+
+  // The previous frame has to be off the draw list and out of the view globals
+  // before the build overwrites them.
+  I_RenderFlush();
+
+  if (!D_BuildFrame(frac))
+    return;
+
+  // Only the ordinary in-game frame overlaps. The automap draws from the live
+  // world, a wipe has to be on screen before the caller continues, and anything
+  // being captured has to finish before the frame it belongs to is named.
+  //
+  // The interpolated frames TryRunTics renders between tics are deliberately
+  // not on that list. With an uncapped framerate they are most of the frames
+  // drawn, so excluding them would leave the render thread idle in exactly the
+  // configuration people play in.
+  sync = !d_frame.in_level || d_frame.automap || d_frame.wipe ||
+         d_frame.progress_only || I_CapturePending();
+
+  I_RenderDispatch(D_DrawFrame);
+
+  if (sync)
+    I_RenderFlush();
 
   // e6y
   // Don't thrash cpu during pausing or if the window doesnt have focus
@@ -555,7 +727,8 @@ void D_Display (fixed_t frac)
 
   dsda_LimitFPS();
 
-  I_EndDisplay();
+  if (d_frame.display_started)
+    I_EndDisplay();
 }
 
 //
@@ -569,10 +742,71 @@ void D_Display (fixed_t frac)
 //  calls I_GetTime, I_StartFrame, and I_StartTic
 //
 
+// Render regression testing.
+//
+// Renders specific gametics of a demo and prints a fingerprint of each, so two
+// builds can be compared. Nothing else can detect a rendering change: every
+// spec in the suite runs -nodraw, which skips the renderer entirely.
+//
+// The frame is fingerprinted inside I_HandleCapture, after drawing completes
+// but before the buffer swap, which is where the existing screenshot and video
+// capture hooks fire.
+static void D_CheckFrameHash(void)
+{
+  static dsda_arg_t *arg;
+  static dboolean parsed;
+  static int tics[64];
+  static int count;
+  static int next;
+
+  if (!parsed)
+  {
+    parsed = true;
+    arg = dsda_Arg(dsda_arg_framehash);
+    if (arg->found)
+    {
+      const char *p = arg->value.v_string;
+
+      while (*p && count < 64)
+      {
+        tics[count++] = atoi(p);
+        while (*p && *p != ',') p++;
+        if (*p == ',') p++;
+      }
+    }
+  }
+
+  if (next >= count)
+  {
+    // One tic past the last capture: the frame was fingerprinted during the
+    // previous D_Display, so there is nothing left to render.
+    if (count > 0 && gametic > tics[count - 1])
+    {
+      // Frames rather than elapsed time, because a plain -playdemo runs at
+      // 35 tics a second whatever the renderer does: the wall clock to a given
+      // tic is fixed, and how many frames fitted into it is the measurement.
+      lprintf(LO_INFO, "FRAMES tic=%d count=%d\n", gametic, r_frame_count);
+      I_SafeExit(0);
+    }
+    return;
+  }
+
+  if (gametic >= tics[next])
+  {
+    I_QueueFrameHash(getenv("DSDA_FRAMEHASH_PNG"));
+    next++;
+  }
+}
+
 static void D_DoomLoop(void)
 {
   if (dsda_IntConfig(dsda_config_startup_delay_ms) > 0)
     I_uSleep(dsda_IntConfig(dsda_config_startup_delay_ms) * 1000);
+
+  // Hands the GL context to the render thread for good. Only from here: every
+  // GL call before this point runs on this thread and expects to find it.
+  if (dsda_Flag(dsda_arg_render_thread))
+    I_StartRenderThread();
 
   for (;;)
   {
@@ -598,6 +832,8 @@ static void D_DoomLoop(void)
     else
       TryRunTics (); // will run at least one tic
 
+    D_CheckFrameHash();
+
     // killough 3/16/98: change consoleplayer to displayplayer
     if (players[displayplayer].mo) // cph 2002/08/10
       S_UpdateSounds();// move positional sounds
@@ -621,7 +857,7 @@ static void D_DoomLoop(void)
             I_QueueFrameCapture();
           }
 
-          D_Display(cap_frac);
+          D_DisplayFrame(cap_frac);
 
           isExtraDDisplay = false;
           cap_frac += cap_step;
@@ -630,7 +866,7 @@ static void D_DoomLoop(void)
       }
       else
       {
-        D_Display(-1);
+        D_DisplayFrame(-1);
       }
     }
   }

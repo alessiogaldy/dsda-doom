@@ -38,36 +38,67 @@
 #include "gl_intern.h"
 #include "lprintf.h"
 
+// Two draw lists. Scene building fills gld_drawinfo; the draw phase reads
+// gld_drawinfo_ready. gld_PublishDrawInfo exchanges them once the BSP walk is
+// finished.
+//
+// While single-threaded the two are the same frame -- publish happens between
+// building and drawing -- so this changes nothing. It exists so the draw phase
+// stops sharing a buffer with scene building, which is what lets the two run
+// concurrently later.
 GLDrawInfo gld_drawinfo;
+GLDrawInfo gld_drawinfo_ready;
+
+//
+// gld_PublishDrawInfo
+//
+// Hands the finished scene to the draw phase and takes back the previous
+// list to fill next frame. Only the bookkeeping is exchanged: the item
+// arrays and data arena stay where they are and get reused, so this is a
+// swap of a few dozen bytes rather than a copy of the scene.
+//
+void gld_PublishDrawInfo(void)
+{
+  GLDrawInfo tmp = gld_drawinfo_ready;
+
+  gld_drawinfo_ready = gld_drawinfo;
+  gld_drawinfo = tmp;
+}
 
 //
 // gld_FreeDrawInfo
 //
-void gld_FreeDrawInfo(void)
+static void gld_FreeOneDrawInfo(GLDrawInfo *di)
 {
   int i;
 
-  for (i = 0; i < gld_drawinfo.maxsize; i++)
+  for (i = 0; i < di->maxsize; i++)
   {
-    if (gld_drawinfo.data[i].data)
+    if (di->data[i].data)
     {
-      Z_Free(gld_drawinfo.data[i].data);
-      gld_drawinfo.data[i].data = 0;
+      Z_Free(di->data[i].data);
+      di->data[i].data = 0;
     }
   }
-  Z_Free(gld_drawinfo.data);
-  gld_drawinfo.data = 0;
+  Z_Free(di->data);
+  di->data = 0;
 
   for (i = 0; i < GLDIT_TYPES; i++)
   {
-    if (gld_drawinfo.items[i])
+    if (di->items[i])
     {
-      Z_Free(gld_drawinfo.items[i]);
-      gld_drawinfo.items[i] = 0;
+      Z_Free(di->items[i]);
+      di->items[i] = 0;
     }
   }
 
-  memset(&gld_drawinfo, 0, sizeof(GLDrawInfo));
+  memset(di, 0, sizeof(*di));
+}
+
+void gld_FreeDrawInfo(void)
+{
+  gld_FreeOneDrawInfo(&gld_drawinfo);
+  gld_FreeOneDrawInfo(&gld_drawinfo_ready);
 }
 
 //

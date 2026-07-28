@@ -53,6 +53,8 @@
 #include "p_maputl.h"
 #include "r_main.h"
 #include "am_map.h"
+#include "i_video.h"
+#include "i_render.h"
 #include "lprintf.h"
 
 static FILE *levelinfo;
@@ -1025,6 +1027,11 @@ static void gld_PreprocessSegs(void)
 
 void gld_PreprocessLevel(void)
 {
+  // Uploads textures and builds the flat VBO, so it needs the context. Bracketed
+  // here rather than at the call sites, which are spread over level load, the
+  // menu, resolution changes and leaving skip mode.
+  I_GLAcquire();
+
   // e6y: speedup of level reloading
   // Do not preprocess GL data twice for same level
   if (!gl_preprocessed)
@@ -1105,6 +1112,8 @@ void gld_PreprocessLevel(void)
   gld_InitVertexData();
 
   gl_preprocessed = true;
+
+  I_GLRelease();
 }
 
 /*****************************

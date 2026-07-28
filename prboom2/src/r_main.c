@@ -49,6 +49,7 @@
 #include "m_bbox.h"
 #include "r_sky.h"
 #include "v_video.h"
+#include "gl_struct.h"
 #include "lprintf.h"
 #include "st_stuff.h"
 #include "i_main.h"
@@ -1021,7 +1022,10 @@ static void R_InitDrawScene(void)
     if (!automap_on)
     {
       // proff 11/99: switch to perspective mode
-      gld_StartDrawScene();
+      //
+      // CPU half only. The context half is gld_BeginFrameGL, which the draw
+      // phase runs; nothing between here and there needs the GL state it sets.
+      gld_StartFrame();
     }
   } else {
     if (dsda_IntConfig(dsda_config_flashing_hom))
@@ -1068,8 +1072,17 @@ static void R_RenderBSPNodes(void)
 //
 // R_RenderView
 //
+// Split in two so the GL half can run on the render thread. R_BuildPlayerView
+// issues no GL: in OpenGL mode it walks the BSP into the draw list and publishes
+// it, and R_DrawPlayerView turns that list into draw calls. Software mode has no
+// such division -- it rasterises straight into the screen buffer, so the whole
+// job stays in the build half and the draw half does nothing.
+//
+// Everything in between still runs on the main thread, which is why the two are
+// separate calls rather than one function with a mode flag: D_Display has work
+// to schedule between them.
 
-void R_RenderPlayerView (player_t* player)
+void R_BuildPlayerView (player_t* player)
 {
   r_frame_count++;
 
@@ -1100,6 +1113,12 @@ void R_RenderPlayerView (player_t* player)
   R_RenderBSPNodes();
   DSDA_REMOVE_CONTEXT(sf_bsp_nodes);
 
+  // The BSP walk is the only thing that adds to the draw list, so the scene is
+  // complete here. Hand it to the draw phase, which from this point reads
+  // gld_drawinfo_ready and no longer shares a buffer with scene building.
+  if (V_IsOpenGLMode())
+    gld_PublishDrawInfo();
+
   FakeNetUpdate();
 
   if (V_IsSoftwareMode())
@@ -1123,9 +1142,16 @@ void R_RenderPlayerView (player_t* player)
   }
 
   FakeNetUpdate();
+}
 
+void R_DrawPlayerView (player_t* player)
+{
   if (V_IsOpenGLMode() && !automap_on) {
     DSDA_ADD_CONTEXT(sf_draw_scene);
+    // The context half of the frame setup R_InitDrawScene started. It has to
+    // land here rather than there: it clears the colour buffer, and the view
+    // border is drawn between the two.
+    gld_BeginFrameGL();
     gld_DrawScene(player);
     gld_EndDrawScene();
     DSDA_REMOVE_CONTEXT(sf_draw_scene);

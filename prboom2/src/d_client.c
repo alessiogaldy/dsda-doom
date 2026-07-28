@@ -134,7 +134,7 @@ void TryRunTics (void)
         if (movement_smooth && gamestate==wipegamestate)
         {
           isExtraDDisplay = true;
-          D_Display(-1);
+          D_DisplayFrame(-1);
           isExtraDDisplay = false;
         }
       }

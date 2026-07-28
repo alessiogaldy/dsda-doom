@@ -33,6 +33,17 @@ pub fn build(
     mod.addCMacro("LIBXMP_STATIC", "");
     mod.addCMacro("HAVE_POWF", "");
 
+    // libxmp carries its own MD5 with the same three external names the game's
+    // prboom2/src/md5.c uses. libxmp calls them internally, so its md5.o is
+    // always pulled out of the archive and every name collides at link time.
+    // Renaming libxmp's copy is consistent because its header, its
+    // implementation and its callers all compile with these defines.
+    //
+    // Only shows up on Linux: ld.lld rejects the duplicates outright, while the
+    // macOS link happens to resolve without complaint.
+    for ([_][]const u8{ "MD5Init", "MD5Update", "MD5Final" }) |name|
+        mod.addCMacro(name, b.fmt("libxmp_{s}", .{name}));
+
     if (posix) {
         // These gate libxmp's external depackers, which shell out via
         // fork/exec to handle archived modules.

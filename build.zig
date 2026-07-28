@@ -178,10 +178,11 @@ pub fn build(b: *std.Build) void {
     const c_files = sources.common_c ++ sources.net_client_c ++ sources.mus2mid_c ++
         sources.sdl_c ++ sources.music_c ++ sources.gl_c;
 
-    // CMake compiles 244 objects for this target. If an upstream merge adds a
-    // source to prboom2/src/CMakeLists.txt without adding it to zig/sources.zig,
-    // this is the tripwire.
-    comptime std.debug.assert(c_files.len + sources.common_cpp.len + 1 == 244);
+    // CMake compiles 245 objects for this target -- upstream's 244 plus
+    // SDL/i_render.c. If an upstream merge adds a source to
+    // prboom2/src/CMakeLists.txt without adding it to zig/sources.zig, this is
+    // the tripwire.
+    comptime std.debug.assert(c_files.len + sources.common_cpp.len + 1 == 245);
 
     mod.addCSourceFiles(.{
         .root = b.path("prboom2/src"),
@@ -327,6 +328,24 @@ pub fn build(b: *std.Build) void {
     bench.has_side_effects = true;
     if (b.args) |args| bench.addArgs(args);
     b.step("bench", "Measure playsim throughput (gametics/sec)").dependOn(&bench.step);
+
+    // Render regression check. The rspec suites all run -nodraw, so nothing
+    // else in the project can observe rendering.
+    const shots_exe = b.addExecutable(.{
+        .name = "shots",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("zig/tools/shots.zig"),
+            .target = b.graph.host,
+            .optimize = .ReleaseSafe,
+        }),
+    });
+    const shots = b.addRunArtifact(shots_exe);
+    shots.addArg("--bin");
+    shots.addArg(b.pathJoin(&.{ b.install_prefix, "bin", project_name }));
+    shots.step.dependOn(b.getInstallStep());
+    shots.has_side_effects = true;
+    if (b.args) |args| shots.addArgs(args);
+    b.step("shots", "Check rendered frames against recorded fingerprints").dependOn(&shots.step);
 }
 
 /// Artifacts built from source, exposed so `zig build check-deps` can smoke-test

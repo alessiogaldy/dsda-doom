@@ -70,6 +70,7 @@
 #include "d_event.h"
 #include "d_deh.h"
 #include "i_video.h"
+#include "i_render.h"
 #include "i_capture.h"
 #include "z_zone.h"
 #include "s_sound.h"
@@ -562,15 +563,39 @@ void I_ShutdownGraphics(void)
 
 static dboolean queue_frame_capture;
 static dboolean queue_screenshot;
+static dboolean queue_frame_hash;
+static const char *frame_hash_png;
 
+// All three wait for the render thread first. These flags are consumed by
+// whichever frame reaches the swap next, so queueing one while a draw is still
+// in flight captures that frame instead of the one the caller meant -- which
+// looks exactly like a rendering difference, and is not one.
 void I_QueueFrameCapture(void)
 {
+  I_RenderFlush();
   queue_frame_capture = true;
 }
 
 void I_QueueScreenshot(void)
 {
+  I_RenderFlush();
   queue_screenshot = true;
+}
+
+// png_path may be NULL; when given, the frame is also written out so a
+// difference can be looked at rather than only detected.
+void I_QueueFrameHash(const char *png_path)
+{
+  I_RenderFlush();
+  queue_frame_hash = true;
+  frame_hash_png = png_path;
+}
+
+// A frame carrying one of these is drawn synchronously, so that what it
+// captures is the frame the caller asked for and gametic still names it.
+dboolean I_CapturePending(void)
+{
+  return queue_frame_capture || queue_screenshot || queue_frame_hash;
 }
 
 void I_HandleCapture(void)
@@ -585,6 +610,19 @@ void I_HandleCapture(void)
   {
     M_ScreenShot();
     queue_screenshot = false;
+  }
+
+  if (queue_frame_hash)
+  {
+    // Deliberately on stdout and machine-readable: the harness parses this.
+    // The timestamp and frame count are here so a benchmark can measure a
+    // window inside one run -- differencing two separate runs folds in each
+    // one's startup noise, which is larger than the effects being measured.
+    lprintf(LO_INFO, "FRAMEHASH tic=%d hash=%016llx ms=%u frames=%d\n",
+            gametic, I_HashScreen(), (unsigned) SDL_GetTicks(), r_frame_count);
+    if (frame_hash_png)
+      M_DoScreenShot(frame_hash_png);
+    queue_frame_hash = false;
   }
 }
 
@@ -666,6 +704,8 @@ void I_SetPalette (int pal)
 
 static void I_ShutdownSDL(void)
 {
+  I_StopRenderThread();
+
   if (sdl_glcontext) SDL_GL_DeleteContext(sdl_glcontext);
   if (screen) SDL_FreeSurface(screen);
   if (buffer) SDL_FreeSurface(buffer);
@@ -1186,6 +1226,10 @@ void I_UpdateVideoMode(void)
 
   if(sdl_window)
   {
+    // The context is about to be destroyed, so it cannot stay on the render
+    // thread. Restarted at the end of this function, once the new one exists.
+    I_StopRenderThread();
+
     // video capturing cannot be continued with new screen settings
     I_CaptureFinish();
 
@@ -1272,6 +1316,10 @@ void I_UpdateVideoMode(void)
       SCREENWIDTH * screen_multiply, ACTUALHEIGHT * screen_multiply,
       init_flags);
     sdl_glcontext = SDL_GL_CreateContext(sdl_window);
+
+    // Hand the render thread what it drives, so nothing in it has to know how
+    // the window and context were made.
+    I_RenderSetTarget(sdl_window, sdl_glcontext);
     SDL_SetWindowMinimumSize(sdl_window, SCREENWIDTH, ACTUALHEIGHT);
   }
   else
@@ -1419,6 +1467,10 @@ void I_UpdateVideoMode(void)
 
   src_rect.w = SCREENWIDTH;
   src_rect.h = SCREENHEIGHT;
+
+  // Only if it was already running: at startup this runs long before the main
+  // loop, and every GL call in between expects the context on this thread.
+  I_RestartRenderThread();
 }
 
 static void ActivateMouse(void)

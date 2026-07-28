@@ -60,6 +60,9 @@ extern dboolean gl_ui_lightmode_indexed;
 extern dboolean gl_automap_lightmode_indexed;
 extern dboolean gl_menu_lightmode_indexed;
 void gld_FlushTextures(void);
+// Hands the finished scene from the BSP walk to the draw phase. Called from
+// R_RenderPlayerView, which is shared with the software renderer.
+void gld_PublishDrawInfo(void);
 
 void gld_InitVertexData();
 void gld_CleanVertexData();
@@ -106,6 +109,11 @@ void gld_PreprocessLevel(void);
 void gld_Set2DMode();
 void gld_InitDrawScene(void);
 void gld_StartDrawScene(void);
+// The two halves of gld_StartDrawScene. R_BuildPlayerView runs the CPU half and
+// R_DrawPlayerView the context half, so the frame's GL can be dispatched to the
+// render thread while the BSP walk stays on the main one.
+void gld_StartFrame(void);
+void gld_BeginFrameGL(void);
 void gld_AddPlane(int subsectornum, visplane_t *floor, visplane_t *ceiling);
 void gld_AddWall(seg_t *seg);
 void gld_ProjectSprite(mobj_t* thing, int lightlevel);

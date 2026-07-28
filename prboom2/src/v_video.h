@@ -301,6 +301,17 @@ extern V_DrawLineWu_f V_DrawLineWu;
 typedef void (*V_PlotPixelWu_f)(int scrn, int x, int y, byte color, int weight);
 extern V_PlotPixelWu_f V_PlotPixelWu;
 
+// Recording the 2D drawing. Between V_BeginRecording and V_EndRecording the
+// table above stores calls instead of issuing them, and V_ReplayRecording
+// issues them later -- on whichever thread owns the GL context. Lets the status
+// bar, HUD and menu keep reading live playsim state on the main thread while
+// their drawing happens off it. See the block in v_video.c for what this does
+// and does not cover.
+void V_BeginRecording(void);
+void V_EndRecording(void);
+void V_ReplayRecording(void);
+dboolean V_IsRecording(void);
+
 void V_AllocScreen(screeninfo_t *scrn);
 void V_AllocScreens();
 void V_FreeScreen(screeninfo_t *scrn);

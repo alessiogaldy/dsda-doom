@@ -93,6 +93,12 @@ static arg_config_t arg_config[dsda_arg_count] = {
     "plays the given demo file as fast as possible, timing the process",
     arg_string,
   },
+  [dsda_arg_framehash] = {
+    "-framehash", NULL, NULL,
+    "prints a fingerprint of the rendered frame at the given gametics "
+    "(comma separated) and exits after the last one",
+    arg_string,
+  },
   [dsda_arg_fastdemo] = {
     "-fastdemo", NULL, NULL,
     "plays the given demo file as fast as possible, skipping some frames",
@@ -486,6 +492,12 @@ static arg_config_t arg_config[dsda_arg_count] = {
   [dsda_arg_nodraw] = {
     "-nodraw", NULL, NULL,
     "turn off drawing",
+    arg_null,
+  },
+  [dsda_arg_render_thread] = {
+    "-render_thread", NULL, NULL,
+    "draw on a second thread, overlapping the next tic's simulation "
+    "with this frame's rendering (OpenGL only)",
     arg_null,
   },
   [dsda_arg_nodeh] = {

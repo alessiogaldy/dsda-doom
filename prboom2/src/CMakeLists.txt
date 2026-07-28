@@ -318,6 +318,7 @@ set(COMMON_SRC
     i_main.h
     i_sound.h
     i_system.h
+    i_render.h
     i_video.h
     lprintf.c
     lprintf.h
@@ -450,6 +451,7 @@ set(SDLDOOM_SOURCES
     SDL/i_sndfile.h
     SDL/i_sshot.c
     SDL/i_system.c
+    SDL/i_render.c
     SDL/i_video.c
 )
 

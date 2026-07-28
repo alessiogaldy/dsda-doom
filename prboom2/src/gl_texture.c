@@ -70,6 +70,8 @@
 #include "gl_intern.h"
 #include "gl_struct.h"
 #include "p_spec.h"
+#include "i_video.h"
+#include "i_render.h"
 #include "e6y.h"
 
 #include "dsda/mapinfo.h"
@@ -1413,6 +1415,8 @@ static void gld_CleanTexItems(int count, GLTexture ***items)
 
 void gld_FlushTextures(void)
 {
+  I_GLAcquire();
+
   gld_CleanTexItems(numtextures, &gld_GLTextures);
   gld_CleanTexItems(numlumps, &gld_GLPatchTextures);
   gld_CleanTexItems(numlumps, &gld_GLStaticPatchTextures);
@@ -1436,6 +1440,8 @@ void gld_FlushTextures(void)
 
   // do not draw anything in current frame after flushing
   gld_ResetDrawInfo();
+
+  I_GLRelease();
 }
 
 static void CalcHitsCount(const byte *hitlist, int size, int *hit, int*hitcount)
@@ -1641,6 +1647,7 @@ void gld_Precache(void)
 
 void gld_CleanMemory(void)
 {
+  I_GLAcquire();
   gld_CleanVertexData();
   gld_CleanTexItems(numtextures, &gld_GLTextures);
   gld_CleanTexItems(numlumps, &gld_GLPatchTextures);
@@ -1648,12 +1655,15 @@ void gld_CleanMemory(void)
   gld_CleanTexItems(numlumps, &gld_GLIndexedPatchTextures);
   gld_CleanTexItems(numtextures * gld_numGLColormaps, &gld_GLIndexedSkyTextures);
   gl_preprocessed = false;
+  I_GLRelease();
 }
 
 void gld_CleanStaticMemory(void)
 {
+  I_GLAcquire();
   gld_CleanTexItems(numlumps, &gld_GLStaticPatchTextures);
   gld_CleanTexItems(numlumps, &gld_GLIndexedStaticPatchTextures);
   gld_CleanTexItems(gld_numGLColormaps, &gld_GLColormapTextures);
   gld_CleanTexItems(gld_numGLColormaps, &gld_GLFullbrightColormapTextures);
+  I_GLRelease();
 }
