@@ -159,6 +159,40 @@ void R_ResetColorMap(void);
 typedef struct {
   void (*build_view)(player_t *player);
   void (*draw_view)(player_t *player);
+
+  // Per-level setup. The GL renderer builds vertex buffers and texture state
+  // for the map; the software renderer has nothing to prepare.
+  void (*preprocess_level)(void);
+
+  // Called when the view size changes, to update anything derived from it.
+  void (*set_viewport_params)(void);
+
+  // Wrapped around each frame of a screen wipe. GL renders the melt through an
+  // offscreen texture so it runs at scene resolution rather than window
+  // resolution.
+  void (*begin_wipe_frame)(void);
+  void (*end_wipe_frame)(void);
+
+  // How the renderer wants a frame composed around the view. These differ
+  // mainly because the GL renderer defers drawing the view to a later phase,
+  // which may be another thread, while the software renderer has already
+  // rasterised it by the time its build half returns.
+
+  // The renderer owns the whole framebuffer, so the area outside the scene has
+  // to be cleared rather than left as whatever was there before.
+  dboolean letterbox_clear;
+
+  // The view border is redrawn every frame rather than only when something
+  // invalidated it.
+  dboolean always_draw_border;
+
+  // The border is drawn after the view rather than before it, which is only
+  // possible when the view has already been rasterised.
+  dboolean border_after_view;
+
+  // The UI has to be recorded during the build half and replayed after the
+  // deferred scene draw, instead of being drawn directly.
+  dboolean records_ui;
 } view_renderer_t;
 
 const view_renderer_t *R_ViewRenderer(void);

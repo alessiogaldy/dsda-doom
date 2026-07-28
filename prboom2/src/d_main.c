@@ -295,20 +295,13 @@ static void D_Wipe(void)
     while (!tics);
 
     // elim - Enable render-to-texture for GL so "melt" is rendered at same resolution as the game scene
-    if (V_IsOpenGLMode())
-    {
-      dsda_GLLetterboxClear();
-      dsda_GLStartMeltRenderTexture();
-    }
+    R_ViewRenderer()->begin_wipe_frame();
 
     wipestart = nowtime;
     done = wipe_ScreenWipe(tics);
 
     // elim - Render texture to screen
-    if (V_IsOpenGLMode())
-    {
-      dsda_GLEndMeltRenderTexture();
-    }
+    R_ViewRenderer()->end_wipe_frame();
 
     M_Drawer();                   // menu is drawn even on top of wipes
 
@@ -470,11 +463,7 @@ static dboolean D_BuildFrame(fixed_t frac)
       return true;
     }
 
-    if (V_IsOpenGLMode())
-    {
-      // Borrows the context back off the render thread, so it stays here.
-      gld_PreprocessLevel();
-    }
+    R_ViewRenderer()->preprocess_level();
   }
 
   if (!dsda_SkipMode() || !dsda_InputActive(dsda_input_use))
@@ -493,7 +482,8 @@ static dboolean D_BuildFrame(fixed_t frac)
 
   f->gamestate = gamestate;
   f->in_level = (gamestate == GS_LEVEL);
-  f->letterbox_clear = (V_IsOpenGLMode() && !exclusive_fullscreen && !nodrawers);
+  f->letterbox_clear = (R_ViewRenderer()->letterbox_clear &&
+                        !exclusive_fullscreen && !nodrawers);
 
 
   // save the current screen if about to wipe
@@ -534,11 +524,11 @@ static dboolean D_BuildFrame(fixed_t frac)
       borderwillneedredraw = borderwillneedredraw || automap_on;
     }
 
-    f->draw_border = (redrawborderstuff || V_IsOpenGLMode());
+    f->draw_border = (redrawborderstuff || R_ViewRenderer()->always_draw_border);
 
     // elim - Update viewport and scene offsets whenever the view is changed (user hits "-" or "+")
-    if (redrawborderstuff && V_IsOpenGLMode())
-      dsda_GLSetRenderViewportParams();
+    if (redrawborderstuff)
+      R_ViewRenderer()->set_viewport_params();
 
     // elim - If we go from visible status bar to invisible status bar, update affected viewport params
     if (!isborder && isborderstate)
@@ -563,7 +553,7 @@ static dboolean D_BuildFrame(fixed_t frac)
     f->automap = automap_active;
     f->st_refresh = (redrawborderstuff || BorderNeedRefresh);
     BorderNeedRefresh = false;
-    f->border_after_view = V_IsSoftwareMode();
+    f->border_after_view = R_ViewRenderer()->border_after_view;
 
     // The copy the draw phase works from.
     f->player = players[displayplayer];
@@ -594,7 +584,7 @@ static dboolean D_BuildFrame(fixed_t frac)
   // replays it after the scene. The automap is excluded because am_map issues
   // GL directly rather than through the V_ table, and those frames do not
   // overlap anyway.
-  if (f->in_level && !f->automap && V_IsOpenGLMode())
+  if (f->in_level && !f->automap && R_ViewRenderer()->records_ui)
   {
     V_BeginRecording();
     D_DrawFrameUI(f);

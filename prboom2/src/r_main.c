@@ -1165,14 +1165,54 @@ static void R_SoftDrawView(player_t *player)
 {
 }
 
+static void R_GLPreprocessLevel(void)
+{
+  // Borrows the context back off the render thread, so it stays on the main
+  // thread.
+  gld_PreprocessLevel();
+}
+
+static void R_GLBeginWipeFrame(void)
+{
+  dsda_GLLetterboxClear();
+  dsda_GLStartMeltRenderTexture();
+}
+
+static void R_GLEndWipeFrame(void)
+{
+  dsda_GLEndMeltRenderTexture();
+}
+
+// The software renderer draws the wipe straight into the screen buffer and has
+// no per-level or viewport state of its own, so these are all empty.
+static void R_SoftNoop(void)
+{
+}
+
 static const view_renderer_t gl_view_renderer = {
-  .build_view = R_GLBuildView,
-  .draw_view  = R_GLDrawView,
+  .build_view          = R_GLBuildView,
+  .draw_view           = R_GLDrawView,
+  .preprocess_level    = R_GLPreprocessLevel,
+  .set_viewport_params = dsda_GLSetRenderViewportParams,
+  .begin_wipe_frame    = R_GLBeginWipeFrame,
+  .end_wipe_frame      = R_GLEndWipeFrame,
+  .letterbox_clear     = true,
+  .always_draw_border  = true,
+  .border_after_view   = false,
+  .records_ui          = true,
 };
 
 static const view_renderer_t soft_view_renderer = {
-  .build_view = R_SoftBuildView,
-  .draw_view  = R_SoftDrawView,
+  .build_view          = R_SoftBuildView,
+  .draw_view           = R_SoftDrawView,
+  .preprocess_level    = R_SoftNoop,
+  .set_viewport_params = R_SoftNoop,
+  .begin_wipe_frame    = R_SoftNoop,
+  .end_wipe_frame      = R_SoftNoop,
+  .letterbox_clear     = false,
+  .always_draw_border  = false,
+  .border_after_view   = true,
+  .records_ui          = false,
 };
 
 // Resolved per call rather than latched at startup, because the video mode can
