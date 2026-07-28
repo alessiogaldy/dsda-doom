@@ -1081,6 +1081,107 @@ static void R_RenderBSPNodes(void)
 // Everything in between still runs on the main thread, which is why the two are
 // separate calls rather than one function with a mode flag: D_Display has work
 // to schedule between them.
+//
+// The two renderers implement that split as a view_renderer_t rather than as
+// mode tests scattered down the frame path. What differs between them is only
+// the order and placement of whole phases, so the seam can sit this high; the
+// BSP walk itself is shared, and still tests the mode internally to decide what
+// to emit.
+
+static void R_GLBuildView(player_t *player)
+{
+  DSDA_ADD_CONTEXT(sf_gl_frustum);
+  gld_FrustumSetup();
+  DSDA_REMOVE_CONTEXT(sf_gl_frustum);
+
+  DSDA_ADD_CONTEXT(sf_bsp_nodes);
+  R_RenderBSPNodes();
+  DSDA_REMOVE_CONTEXT(sf_bsp_nodes);
+
+  // The BSP walk is the only thing that adds to the draw list, so the scene is
+  // complete here. Hand it to the draw phase, which from this point reads
+  // gld_drawinfo_ready and no longer shares a buffer with scene building.
+  gld_PublishDrawInfo();
+
+  FakeNetUpdate();
+
+  DSDA_ADD_CONTEXT(sf_reset_column_buffer);
+  R_ResetColumnBuffer();
+  DSDA_REMOVE_CONTEXT(sf_reset_column_buffer);
+
+  // Two in a row, and deliberately so: this half used to share one straight
+  // line of code with the software renderer, and these are the update points
+  // that fell either side of phases only that renderer runs. They are kept
+  // because they pump input and the network, so dropping them would change
+  // how often a long frame yields.
+  FakeNetUpdate();
+  FakeNetUpdate();
+}
+
+static void R_GLDrawView(player_t *player)
+{
+  if (automap_on)
+    return;
+
+  DSDA_ADD_CONTEXT(sf_draw_scene);
+  // The context half of the frame setup R_InitDrawScene started. It has to
+  // land here rather than there: it clears the colour buffer, and the view
+  // border is drawn between the two.
+  gld_BeginFrameGL();
+  gld_DrawScene(player);
+  gld_EndDrawScene();
+  DSDA_REMOVE_CONTEXT(sf_draw_scene);
+}
+
+static void R_SoftBuildView(player_t *player)
+{
+  DSDA_ADD_CONTEXT(sf_bsp_nodes);
+  R_RenderBSPNodes();
+  DSDA_REMOVE_CONTEXT(sf_bsp_nodes);
+
+  FakeNetUpdate();
+
+  DSDA_ADD_CONTEXT(sf_draw_planes);
+  R_DrawPlanes();
+  DSDA_REMOVE_CONTEXT(sf_draw_planes);
+
+  DSDA_ADD_CONTEXT(sf_reset_column_buffer);
+  R_ResetColumnBuffer();
+  DSDA_REMOVE_CONTEXT(sf_reset_column_buffer);
+
+  FakeNetUpdate();
+
+  DSDA_ADD_CONTEXT(sf_draw_masked);
+  R_DrawMasked ();
+  R_ResetColumnBuffer();
+  DSDA_REMOVE_CONTEXT(sf_draw_masked);
+
+  FakeNetUpdate();
+}
+
+// Nothing to do: the software renderer has already rasterised the view into
+// the screen buffer during its build half.
+static void R_SoftDrawView(player_t *player)
+{
+}
+
+static const view_renderer_t gl_view_renderer = {
+  .build_view = R_GLBuildView,
+  .draw_view  = R_GLDrawView,
+};
+
+static const view_renderer_t soft_view_renderer = {
+  .build_view = R_SoftBuildView,
+  .draw_view  = R_SoftDrawView,
+};
+
+// Resolved per call rather than latched at startup, because the video mode can
+// change at runtime. This is the one place the frame path asks which renderer
+// is in use.
+const view_renderer_t *R_ViewRenderer(void)
+{
+  return V_IsOpenGLMode() ? &gl_view_renderer : &soft_view_renderer;
+}
 
 void R_BuildPlayerView (player_t* player)
 {
@@ -1103,57 +1204,10 @@ void R_BuildPlayerView (player_t* player)
 
   FakeNetUpdate();
 
-  if (V_IsOpenGLMode()) {
-    DSDA_ADD_CONTEXT(sf_gl_frustum);
-    gld_FrustumSetup();
-    DSDA_REMOVE_CONTEXT(sf_gl_frustum);
-  }
-
-  DSDA_ADD_CONTEXT(sf_bsp_nodes);
-  R_RenderBSPNodes();
-  DSDA_REMOVE_CONTEXT(sf_bsp_nodes);
-
-  // The BSP walk is the only thing that adds to the draw list, so the scene is
-  // complete here. Hand it to the draw phase, which from this point reads
-  // gld_drawinfo_ready and no longer shares a buffer with scene building.
-  if (V_IsOpenGLMode())
-    gld_PublishDrawInfo();
-
-  FakeNetUpdate();
-
-  if (V_IsSoftwareMode())
-  {
-    DSDA_ADD_CONTEXT(sf_draw_planes);
-    R_DrawPlanes();
-    DSDA_REMOVE_CONTEXT(sf_draw_planes);
-  }
-
-  DSDA_ADD_CONTEXT(sf_reset_column_buffer);
-  R_ResetColumnBuffer();
-  DSDA_REMOVE_CONTEXT(sf_reset_column_buffer);
-
-  FakeNetUpdate();
-
-  if (V_IsSoftwareMode()) {
-    DSDA_ADD_CONTEXT(sf_draw_masked);
-    R_DrawMasked ();
-    R_ResetColumnBuffer();
-    DSDA_REMOVE_CONTEXT(sf_draw_masked);
-  }
-
-  FakeNetUpdate();
+  R_ViewRenderer()->build_view(player);
 }
 
 void R_DrawPlayerView (player_t* player)
 {
-  if (V_IsOpenGLMode() && !automap_on) {
-    DSDA_ADD_CONTEXT(sf_draw_scene);
-    // The context half of the frame setup R_InitDrawScene started. It has to
-    // land here rather than there: it clears the colour buffer, and the view
-    // border is drawn between the two.
-    gld_BeginFrameGL();
-    gld_DrawScene(player);
-    gld_EndDrawScene();
-    DSDA_REMOVE_CONTEXT(sf_draw_scene);
-  }
+  R_ViewRenderer()->draw_view(player);
 }

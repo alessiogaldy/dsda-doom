@@ -148,6 +148,21 @@ angle_t R_PointToPseudoAngle(fixed_t x, fixed_t y);
 //
 
 void R_ResetColorMap(void);
+// How a renderer draws the 3D view, in the two halves the frame is split into.
+// build_view runs on the main thread and may not issue any GL; draw_view runs
+// wherever the GL context lives, which may be the render thread.
+//
+// The split is what the two renderers disagree about. OpenGL walks the BSP into
+// a draw list in the build half and turns that list into draw calls in the draw
+// half. The software renderer rasterises straight into the screen buffer as it
+// walks, so all of its work is in the build half and its draw half is empty.
+typedef struct {
+  void (*build_view)(player_t *player);
+  void (*draw_view)(player_t *player);
+} view_renderer_t;
+
+const view_renderer_t *R_ViewRenderer(void);
+
 // The two halves of the frame. R_BuildPlayerView issues no GL and stays on the
 // main thread; R_DrawPlayerView is GL only and runs wherever the context lives.
 void R_BuildPlayerView(player_t *player);
