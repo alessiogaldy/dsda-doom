@@ -90,13 +90,25 @@ float gld_CalcLightLevel(int lightlevel)
   return (float)light/255.0f;
 }
 
-void gld_StaticLightAlpha(float light, float alpha)
+// The light the shader should see for a given sector light level. An active
+// fixed colormap (invulnerability, light amp) means full bright regardless.
+float gld_EffectiveLight(float light)
 {
   player_t *player = &players[displayplayer];
 
+  return player->fixedcolormap ? 1.0f : light;
+}
+
+void gld_StaticLightAlpha(float light, float alpha)
+{
   glColor4f(1.0f, 1.0f, 1.0f, alpha);
 
-  glsl_SetLightLevel((player->fixedcolormap ? 1.0f : light));
+  // Sets the *current* value of the unit 1 texture coordinate, which gls_v
+  // reads as the light level. It applies to every vertex of the following
+  // draws until changed, because these callers leave the unit 1 array
+  // disabled; the wall batcher enables that array instead and supplies a
+  // value per vertex.
+  GLEXT_glMultiTexCoord2fARB(GL_TEXTURE1_ARB, gld_EffectiveLight(light), 0.0f);
 }
 
 // [XA] return amount of light to add from the player's gun flash.

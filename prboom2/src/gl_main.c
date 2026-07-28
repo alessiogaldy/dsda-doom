@@ -445,23 +445,28 @@ void gld_MapDrawSubsectors(player_t *plr, int fx, int fy, fixed_t mx, fixed_t my
   glDisableClientState(GL_COLOR_ARRAY);
 }
 
+// Defined with the rest of the scene submission, below; declared here because
+// the 2D emitters above it draw quads too.
+static void gld_Quad2DVertex(int i, float x, float y, float u, float v);
+static void gld_DrawQuad2D(void);
+
 void gld_DrawTriangleStrip(GLWall *wall, gl_strip_coords_t *c)
 {
-  glBegin(GL_TRIANGLE_STRIP);
+  // Already laid out as tightly packed arrays, so they can be handed straight
+  // to the pointers without a copy.
+  if (gl_ext_arb_vertex_buffer_object)
+    GLEXT_glBindBufferARB(GL_ARRAY_BUFFER, 0);
 
-  glTexCoord2fv((const GLfloat*)&c->t[0]);
-  glVertex3fv((const GLfloat*)&c->v[0]);
+  glVertexPointer(3, GL_FLOAT, 0, c->v);
+  glTexCoordPointer(2, GL_FLOAT, 0, c->t);
+  glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
 
-  glTexCoord2fv((const GLfloat*)&c->t[1]);
-  glVertex3fv((const GLfloat*)&c->v[1]);
-
-  glTexCoord2fv((const GLfloat*)&c->t[2]);
-  glVertex3fv((const GLfloat*)&c->v[2]);
-
-  glTexCoord2fv((const GLfloat*)&c->t[3]);
-  glVertex3fv((const GLfloat*)&c->v[3]);
-
-  glEnd();
+  if (gl_ext_arb_vertex_buffer_object)
+  {
+    GLEXT_glBindBufferARB(GL_ARRAY_BUFFER, flats_vbo_id);
+    glVertexPointer(3, GL_FLOAT, sizeof(flats_vbo[0]), flats_vbo_x);
+    glTexCoordPointer(2, GL_FLOAT, sizeof(flats_vbo[0]), flats_vbo_u);
+  }
 }
 
 void gld_BeginUIDraw(void)
@@ -823,16 +828,11 @@ void gld_DrawWeapon(int weaponlump, vissprite_t *vis, int lightlevel)
     else
       gld_StaticLight(light);
   }
-  glBegin(GL_TRIANGLE_STRIP);
-  glTexCoord2f(fU1, fV1);
-  glVertex2f(x1, y1);
-  glTexCoord2f(fU1, fV2);
-  glVertex2f(x1, y2);
-  glTexCoord2f(fU2, fV1);
-  glVertex2f(x2, y1);
-  glTexCoord2f(fU2, fV2);
-  glVertex2f(x2, y2);
-  glEnd();
+  gld_Quad2DVertex(0, x1, y1, fU1, fV1);
+  gld_Quad2DVertex(1, x1, y2, fU1, fV2);
+  gld_Quad2DVertex(2, x2, y1, fU2, fV1);
+  gld_Quad2DVertex(3, x2, y2, fU2, fV2);
+  gld_DrawQuad2D();
   if(!vis->colormap)
   {
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
@@ -1130,14 +1130,11 @@ void gld_EndDrawScene(void)
     dsda_GLSetRenderViewport();
     // elim - Prevent undrawn parts of game scene texture being rendered into the viewport
     dsda_GLSetRenderSceneScissor();
-    glBegin(GL_TRIANGLE_STRIP);
-    {
-      glTexCoord2f(0.0f, 1.0f); glVertex2f(0.0f, 0.0f);
-      glTexCoord2f(0.0f, 0.0f); glVertex2f(0.0f, renderer_rect.h);
-      glTexCoord2f(1.0f, 1.0f); glVertex2f((float)renderer_rect.w, 0.0f);
-      glTexCoord2f(1.0f, 0.0f); glVertex2f((float)renderer_rect.w, (float)renderer_rect.h);
-    }
-    glEnd();
+    gld_Quad2DVertex(0, 0.0f, 0.0f, 0.0f, 1.0f);
+    gld_Quad2DVertex(1, 0.0f, (float) renderer_rect.h, 0.0f, 0.0f);
+    gld_Quad2DVertex(2, (float) renderer_rect.w, 0.0f, 1.0f, 1.0f);
+    gld_Quad2DVertex(3, (float) renderer_rect.w, (float) renderer_rect.h, 1.0f, 0.0f);
+    gld_DrawQuad2D();
 
     // elim - Set the scissor back to the full viewport so post-scene draws can happen (ie StatusBar)
     dsda_GLSetRenderViewportScissor();
@@ -1195,6 +1192,142 @@ static void gld_AddDrawWallItem(GLDrawItemType itemtype, void *itemdata)
  *               *
  *****************/
 
+//
+// Wall batching
+//
+// A wall used to go out as its own glBegin/glEnd pair: eleven GL entry points
+// for one quad. They are already sorted by texture, so consecutive ones can be
+// accumulated into a vertex array and drawn with a single glDrawArrays.
+//
+// A batch has to break whenever per-draw state changes -- the texture or the
+// alpha. Light used to break batches too, and was by far the worst offender:
+// it varies per sector rather than per texture, so on Sunder map 21 the 3675
+// walls in a frame collapsed to 1889 batches where the texture alone would
+// have given 46. It is now a vertex attribute (see gls_v), so it no longer
+// splits anything.
+//
+typedef struct {
+  float x, y, z;
+  float u, v;
+  float light;
+} wall_vertex_t;
+
+static wall_vertex_t *wall_verts;
+static int wall_vert_count, wall_vert_max;
+
+// The fan being assembled. The edge splitters in gl_vertex.c append here too,
+// which is why gld_FanVertex is not static.
+static wall_vertex_t *fan_verts;
+static int fan_count, fan_max;
+
+static const GLTexture *batch_tex;
+static unsigned int batch_texflags;
+static float batch_alpha;
+static dboolean batch_open;
+
+// Light for the vertices being emitted. Held here rather than passed down
+// because it is a property of the wall, and the edge splitters in gl_vertex.c
+// append vertices without knowing anything about it.
+static float fan_light;
+
+void gld_SetFanLight(float light)
+{
+  fan_light = gld_EffectiveLight(light);
+}
+
+void gld_FanVertex(float x, float y, float z, float u, float v)
+{
+  wall_vertex_t *fv;
+
+  if (fan_count == fan_max)
+  {
+    fan_max = fan_max ? fan_max * 2 : 32;
+    fan_verts = Z_Realloc(fan_verts, fan_max * sizeof(*fan_verts));
+  }
+
+  fv = &fan_verts[fan_count++];
+  fv->x = x; fv->y = y; fv->z = z;
+  fv->u = u; fv->v = v;
+  fv->light = fan_light;
+}
+
+static void gld_BatchVertex(const wall_vertex_t *v)
+{
+  if (wall_vert_count == wall_vert_max)
+  {
+    wall_vert_max = wall_vert_max ? wall_vert_max * 2 : 4096;
+    wall_verts = Z_Realloc(wall_verts, wall_vert_max * sizeof(*wall_verts));
+  }
+
+  wall_verts[wall_vert_count++] = *v;
+}
+
+// Emits the assembled fan as triangles, so every wall occupies the same
+// primitive type regardless of how many vertices its split edges added.
+static void gld_BatchFan(void)
+{
+  int i;
+
+  for (i = 1; i + 1 < fan_count; i++)
+  {
+    gld_BatchVertex(&fan_verts[0]);
+    gld_BatchVertex(&fan_verts[i]);
+    gld_BatchVertex(&fan_verts[i + 1]);
+  }
+
+  fan_count = 0;
+}
+
+void gld_FlushWalls(void)
+{
+  if (!wall_vert_count)
+  {
+    batch_open = false;
+    return;
+  }
+
+  gld_BindTexture((GLTexture *) batch_tex, batch_texflags, false);
+
+  if (!batch_tex)
+    glColor4f(1.0f, 0.0f, 0.0f, 1.0f);
+  else
+    glColor4f(1.0f, 1.0f, 1.0f, batch_alpha);
+
+  // gld_DrawScene keeps the flats VBO bound across the whole scene, and while
+  // a buffer is bound the array pointers are offsets into it rather than
+  // addresses. Unbind for the draw and put it back afterwards, so the flat
+  // pointers the caller set up stay valid.
+  if (gl_ext_arb_vertex_buffer_object)
+    GLEXT_glBindBufferARB(GL_ARRAY_BUFFER, 0);
+
+  glVertexPointer(3, GL_FLOAT, sizeof(wall_vertex_t), &wall_verts[0].x);
+  glTexCoordPointer(2, GL_FLOAT, sizeof(wall_vertex_t), &wall_verts[0].u);
+
+  // Light per vertex on unit 1. Enabled only around this draw: every other
+  // caller relies on the current-value path in gld_StaticLightAlpha, which
+  // applies only while this array is disabled.
+  GLEXT_glClientActiveTextureARB(GL_TEXTURE1_ARB);
+  glTexCoordPointer(1, GL_FLOAT, sizeof(wall_vertex_t), &wall_verts[0].light);
+  glEnableClientState(GL_TEXTURE_COORD_ARRAY);
+  GLEXT_glClientActiveTextureARB(GL_TEXTURE0_ARB);
+
+  glDrawArrays(GL_TRIANGLES, 0, wall_vert_count);
+
+  GLEXT_glClientActiveTextureARB(GL_TEXTURE1_ARB);
+  glDisableClientState(GL_TEXTURE_COORD_ARRAY);
+  GLEXT_glClientActiveTextureARB(GL_TEXTURE0_ARB);
+
+  if (gl_ext_arb_vertex_buffer_object)
+  {
+    GLEXT_glBindBufferARB(GL_ARRAY_BUFFER, flats_vbo_id);
+    glVertexPointer(3, GL_FLOAT, sizeof(flats_vbo[0]), flats_vbo_x);
+    glTexCoordPointer(2, GL_FLOAT, sizeof(flats_vbo[0]), flats_vbo_u);
+  }
+
+  wall_vert_count = 0;
+  batch_open = false;
+}
+
 static void gld_DrawWall(GLWall *wall)
 {
   unsigned int flags;
@@ -1208,16 +1341,17 @@ static void gld_DrawWall(GLWall *wall)
   else
     flags = 0;
 
-  gld_BindTexture(wall->gltexture, flags, false);
-
-  if (!wall->gltexture)
-  {
-    glColor4f(1.0f,0.0f,0.0f,1.0f);
-  }
-
   if ((wall->flag == GLDWF_TOPFLUD) || (wall->flag == GLDWF_BOTFLUD))
   {
     gl_strip_coords_t c;
+
+    // Stencil work and its own state: nothing here can share a batch.
+    gld_FlushWalls();
+
+    gld_BindTexture(wall->gltexture, flags, false);
+
+    if (!wall->gltexture)
+      glColor4f(1.0f, 0.0f, 0.0f, 1.0f);
 
     gld_BindFlat(wall->gltexture, 0);
 
@@ -1230,35 +1364,44 @@ static void gld_DrawWall(GLWall *wall)
   }
   else
   {
-    gld_StaticLightAlpha(wall->light, wall->alpha);
+    if (!batch_open || wall->gltexture != batch_tex || flags != batch_texflags ||
+        wall->alpha != batch_alpha)
+    {
+      gld_FlushWalls();
+      batch_tex = wall->gltexture;
+      batch_texflags = flags;
+      batch_alpha = wall->alpha;
+      batch_open = true;
+    }
 
-    glBegin(GL_TRIANGLE_FAN);
+    gld_SetFanLight(wall->light);
+    fan_count = 0;
 
     // lower left corner
-    glTexCoord2f(wall->ul,wall->vb);
-    glVertex3f(wall->glseg->x1,wall->ybottom,wall->glseg->z1);
+    gld_FanVertex(wall->glseg->x1, wall->ybottom, wall->glseg->z1,
+                  wall->ul, wall->vb);
 
     // split left edge of wall
     if (!wall->glseg->fracleft)
       gld_SplitLeftEdge(wall);
 
     // upper left corner
-    glTexCoord2f(wall->ul,wall->vt);
-    glVertex3f(wall->glseg->x1,wall->ytop,wall->glseg->z1);
+    gld_FanVertex(wall->glseg->x1, wall->ytop, wall->glseg->z1,
+                  wall->ul, wall->vt);
 
     // upper right corner
-    glTexCoord2f(wall->ur,wall->vt);
-    glVertex3f(wall->glseg->x2,wall->ytop,wall->glseg->z2);
+    gld_FanVertex(wall->glseg->x2, wall->ytop, wall->glseg->z2,
+                  wall->ur, wall->vt);
 
     // split right edge of wall
     if (!wall->glseg->fracright)
       gld_SplitRightEdge(wall);
 
     // lower right corner
-    glTexCoord2f(wall->ur,wall->vb);
-    glVertex3f(wall->glseg->x2,wall->ybottom,wall->glseg->z2);
+    gld_FanVertex(wall->glseg->x2, wall->ybottom, wall->glseg->z2,
+                  wall->ur, wall->vb);
 
-    glEnd();
+    gld_BatchFan();
   }
 }
 
@@ -2030,6 +2173,59 @@ void gld_AddPlane(int subsectornum, visplane_t *floor, visplane_t *ceiling)
  *               *
  *****************/
 
+// A single four-vertex strip. Sprites, flood planes and the weapon each carry
+// their own texture and blend state, so consecutive ones almost never share a
+// batch and they go out one draw at a time. The point is that the scene
+// submits vertex arrays rather than immediate mode, not that these coalesce.
+static wall_vertex_t quad3d[4];
+static struct { float x, y, u, v; } quad2d[4];
+
+static void gld_Quad3DVertex(int i, float x, float y, float z, float u, float v)
+{
+  quad3d[i].x = x; quad3d[i].y = y; quad3d[i].z = z;
+  quad3d[i].u = u; quad3d[i].v = v;
+}
+
+static void gld_Quad2DVertex(int i, float x, float y, float u, float v)
+{
+  quad2d[i].x = x; quad2d[i].y = y;
+  quad2d[i].u = u; quad2d[i].v = v;
+}
+
+// Used by the weapon and the scene-texture blit, both of which run after
+// gld_DrawScene has disabled the client arrays and unbound the flats buffer.
+// So this enables what it needs and puts it back, rather than assuming the
+// scene's state is still in place the way gld_DrawQuad3D can.
+static void gld_DrawQuad2D(void)
+{
+  glEnableClientState(GL_VERTEX_ARRAY);
+  glEnableClientState(GL_TEXTURE_COORD_ARRAY);
+
+  glVertexPointer(2, GL_FLOAT, sizeof(quad2d[0]), &quad2d[0].x);
+  glTexCoordPointer(2, GL_FLOAT, sizeof(quad2d[0]), &quad2d[0].u);
+  glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+
+  glDisableClientState(GL_TEXTURE_COORD_ARRAY);
+  glDisableClientState(GL_VERTEX_ARRAY);
+}
+
+static void gld_DrawQuad3D(void)
+{
+  if (gl_ext_arb_vertex_buffer_object)
+    GLEXT_glBindBufferARB(GL_ARRAY_BUFFER, 0);
+
+  glVertexPointer(3, GL_FLOAT, sizeof(quad3d[0]), &quad3d[0].x);
+  glTexCoordPointer(2, GL_FLOAT, sizeof(quad3d[0]), &quad3d[0].u);
+  glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+
+  if (gl_ext_arb_vertex_buffer_object)
+  {
+    GLEXT_glBindBufferARB(GL_ARRAY_BUFFER, flats_vbo_id);
+    glVertexPointer(3, GL_FLOAT, sizeof(flats_vbo[0]), flats_vbo_x);
+    glTexCoordPointer(2, GL_FLOAT, sizeof(flats_vbo[0]), flats_vbo_u);
+  }
+}
+
 static void gld_DrawSprite(GLSprite *sprite)
 {
   GLint blend_src, blend_dst;
@@ -2086,12 +2282,11 @@ static void gld_DrawSprite(GLSprite *sprite)
     z3 = -(sprite->x1 * sin_inv_yaw + y2z2_y * cos_inv_yaw) + sprite->z;
     z4 = -(sprite->x2 * sin_inv_yaw + y2z2_y * cos_inv_yaw) + sprite->z;
 
-    glBegin(GL_TRIANGLE_STRIP);
-    glTexCoord2f(sprite->ul, sprite->vt); glVertex3f(x1, y1, z1);
-    glTexCoord2f(sprite->ur, sprite->vt); glVertex3f(x2, y1, z2);
-    glTexCoord2f(sprite->ul, sprite->vb); glVertex3f(x3, y2, z3);
-    glTexCoord2f(sprite->ur, sprite->vb); glVertex3f(x4, y2, z4);
-    glEnd();
+    gld_Quad3DVertex(0, x1, y1, z1, sprite->ul, sprite->vt);
+    gld_Quad3DVertex(1, x2, y1, z2, sprite->ur, sprite->vt);
+    gld_Quad3DVertex(2, x3, y2, z3, sprite->ul, sprite->vb);
+    gld_Quad3DVertex(3, x4, y2, z4, sprite->ur, sprite->vb);
+    gld_DrawQuad3D();
   }
   else
   {
@@ -2106,12 +2301,11 @@ static void gld_DrawSprite(GLSprite *sprite)
     z2 = -(sprite->x1 * sin_inv_yaw) + sprite->z;
     z1 = -(sprite->x2 * sin_inv_yaw) + sprite->z;
 
-    glBegin(GL_TRIANGLE_STRIP);
-    glTexCoord2f(sprite->ul, sprite->vt); glVertex3f(x1, y1, z2);
-    glTexCoord2f(sprite->ur, sprite->vt); glVertex3f(x2, y1, z1);
-    glTexCoord2f(sprite->ul, sprite->vb); glVertex3f(x1, y2, z2);
-    glTexCoord2f(sprite->ur, sprite->vb); glVertex3f(x2, y2, z1);
-    glEnd();
+    gld_Quad3DVertex(0, x1, y1, z2, sprite->ul, sprite->vt);
+    gld_Quad3DVertex(1, x2, y1, z1, sprite->ur, sprite->vt);
+    gld_Quad3DVertex(2, x1, y2, z2, sprite->ul, sprite->vb);
+    gld_Quad3DVertex(3, x2, y2, z1, sprite->ur, sprite->vb);
+    gld_DrawQuad3D();
   }
 
   if (restore)
@@ -2161,6 +2355,33 @@ static GLfloat health_bar_rgb[3][3] = {
   [health_bar_yellow] = { 1.0f, 1.0f, 0.0f },
 };
 
+static float *hbar_pos;
+static int hbar_vert_count, hbar_vert_max;
+
+static void gld_HBarVertex(float x, float y, float z)
+{
+  if (hbar_vert_count == hbar_vert_max)
+  {
+    hbar_vert_max = hbar_vert_max ? hbar_vert_max * 2 : 256;
+    hbar_pos = Z_Realloc(hbar_pos, hbar_vert_max * 3 * sizeof(float));
+  }
+
+  hbar_pos[hbar_vert_count * 3 + 0] = x;
+  hbar_pos[hbar_vert_count * 3 + 1] = y;
+  hbar_pos[hbar_vert_count * 3 + 2] = z;
+  hbar_vert_count++;
+}
+
+static void gld_FlushHBars(void)
+{
+  if (!hbar_vert_count)
+    return;
+
+  glVertexPointer(3, GL_FLOAT, 0, hbar_pos);
+  glDrawArrays(GL_LINES, 0, hbar_vert_count);
+  hbar_vert_count = 0;
+}
+
 static void gld_DrawHealthBars(void)
 {
   int i, count;
@@ -2171,33 +2392,51 @@ static void gld_DrawHealthBars(void)
   {
     gld_EnableTexture2D(GL_TEXTURE0_ARB, false);
 
-    glBegin(GL_LINES);
+    // Untextured, and the flats buffer is still bound from the scene, so the
+    // texture coordinate array has to go and the pointers must come from
+    // client memory.
+    glDisableClientState(GL_TEXTURE_COORD_ARRAY);
+    if (gl_ext_arb_vertex_buffer_object)
+      GLEXT_glBindBufferARB(GL_ARRAY_BUFFER, 0);
+
+    // One draw per colour run rather than a colour array: the original only
+    // calls glColor4f when the colour changes, so bars before the first change
+    // inherit whatever colour was already set. Splitting on the same
+    // boundaries keeps that behaviour exactly.
     for (i = count - 1; i >= 0; i--)
     {
       GLHealthBar *hbar = gld_drawinfo_ready.items[GLDIT_HBAR][i].item.hbar;
       if (hbar->color != color)
       {
+        gld_FlushHBars();
         color = hbar->color;
         glColor4f(health_bar_rgb[color][0],
                   health_bar_rgb[color][1],
                   health_bar_rgb[color][2], 1.0f);
       }
 
-      glVertex3f(hbar->x1, hbar->y, hbar->z1);
-      glVertex3f(hbar->x2, hbar->y, hbar->z2);
+      gld_HBarVertex(hbar->x1, hbar->y, hbar->z1);
+      gld_HBarVertex(hbar->x2, hbar->y, hbar->z2);
     }
-    glEnd();
+    gld_FlushHBars();
 
     glColor4f(0.5f, 0.5f, 0.5f, 1.0f);
-    glBegin(GL_LINES);
     for (i = count - 1; i >= 0; i--)
     {
       GLHealthBar *hbar = gld_drawinfo_ready.items[GLDIT_HBAR][i].item.hbar;
 
-      glVertex3f(hbar->x1, hbar->y, hbar->z1);
-      glVertex3f(hbar->x3, hbar->y, hbar->z3);
+      gld_HBarVertex(hbar->x1, hbar->y, hbar->z1);
+      gld_HBarVertex(hbar->x3, hbar->y, hbar->z3);
     }
-    glEnd();
+    gld_FlushHBars();
+
+    if (gl_ext_arb_vertex_buffer_object)
+    {
+      GLEXT_glBindBufferARB(GL_ARRAY_BUFFER, flats_vbo_id);
+      glVertexPointer(3, GL_FLOAT, sizeof(flats_vbo[0]), flats_vbo_x);
+      glTexCoordPointer(2, GL_FLOAT, sizeof(flats_vbo[0]), flats_vbo_u);
+    }
+    glEnableClientState(GL_TEXTURE_COORD_ARRAY);
 
     gld_EnableTexture2D(GL_TEXTURE0_ARB, true);
   }
@@ -2590,6 +2829,7 @@ void gld_DrawProjectedWalls(GLDrawItemType itemtype)
 
       gld_ProcessWall(wall);
     }
+    gld_FlushWalls();
     glDisable(GL_STENCIL_TEST);
 
     glPolygonOffset(0.0f, 0.0f);
@@ -2658,6 +2898,7 @@ void gld_DrawScene(player_t *player)
   {
     gld_ProcessWall(gld_drawinfo_ready.items[GLDIT_WALL][i].item.wall);
   }
+  gld_FlushWalls();
 
   // masked geometry
   glEnable(GL_ALPHA_TEST);
@@ -2675,6 +2916,7 @@ void gld_DrawScene(player_t *player)
         gld_ProcessWall(wall);
       }
     }
+    gld_FlushWalls();
 
     // opaque mid walls with holes
 
@@ -2690,6 +2932,7 @@ void gld_DrawScene(player_t *player)
         gld_ProcessWall(wall);
       }
     }
+    gld_FlushWalls();
 
     glStencilFunc(GL_EQUAL, 1, ~0);
     glStencilOp(GL_KEEP, GL_KEEP, GL_KEEP);
@@ -2710,6 +2953,7 @@ void gld_DrawScene(player_t *player)
     {
       gld_ProcessWall(gld_drawinfo_ready.items[GLDIT_MWALL][i].item.wall);
     }
+    gld_FlushWalls();
   }
 
   // projected walls
@@ -2830,6 +3074,7 @@ void gld_DrawScene(player_t *player)
         glDepthMask(GL_FALSE);
         /* transparent wall is farther, draw it */
         gld_ProcessWall(gld_drawinfo_ready.items[GLDIT_TWALL][twall_idx].item.wall);
+        gld_FlushWalls();
         glDepthMask(GL_TRUE);
         twall_idx--;
       }

@@ -562,7 +562,6 @@ enum
 {
   MAIN_UNIF_TEX,
   MAIN_UNIF_COLORMAP,
-  MAIN_UNIF_LIGHTLEVEL,
   MAIN_UNIF_FADE_MODE
 };
 
@@ -586,7 +585,6 @@ static const shader_info_t main_info =
   {
     UNIF(MAIN_UNIF_TEX, "tex", UNIF_TEX0),
     UNIF(MAIN_UNIF_COLORMAP, "colormap", UNIF_TEX2),
-    UNIF(MAIN_UNIF_LIGHTLEVEL, "lightlevel", UNIF_1F),
     UNIF(MAIN_UNIF_FADE_MODE, "fade_mode", UNIF_1I),
     UNIF_END
   }
@@ -611,6 +609,17 @@ void glsl_Init(void)
 {
   sh_main = glsl_ShaderLoad(&main_info, NULL);
   sh_fuzz = glsl_ShaderLoad(&fuzz_info, NULL);
+
+  // gls_main used to take the light level as a uniform; it is a varying now,
+  // fed per vertex by gls_v. The shaders live in dsda-doom.wad, so a wad older
+  // than the executable still compiles and links perfectly -- but nothing ever
+  // sets the uniform, and the entire scene renders black with no diagnostic.
+  // Refuse to start instead, since a black screen gives the user nothing to go
+  // on.
+  if (GLEXT_glGetUniformLocationARB(sh_main->hShader, "lightlevel") != -1)
+    I_Error("Shader \"gls_main\" declares lightlevel as a uniform, so "
+            "dsda-doom.wad is older than this executable.\n"
+            "Rebuild so that the wad and the binary match.");
 }
 
 void glsl_PushNullShader(void)
@@ -635,11 +644,6 @@ void glsl_PushMainShader(void)
 void glsl_PopMainShader(void)
 {
   glsl_ShaderPop(sh_main);
-}
-
-void glsl_SetLightLevel(float lightlevel)
-{
-  glsl_ShaderUniform(sh_main, MAIN_UNIF_LIGHTLEVEL, lightlevel);
 }
 
 void glsl_PushFuzzShader(int tic, int sprite, float ratio)
