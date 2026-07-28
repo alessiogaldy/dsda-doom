@@ -609,6 +609,17 @@ void glsl_Init(void)
 {
   sh_main = glsl_ShaderLoad(&main_info, NULL);
   sh_fuzz = glsl_ShaderLoad(&fuzz_info, NULL);
+
+  // gls_main used to take the light level as a uniform; it is a varying now,
+  // fed per vertex by gls_v. The shaders live in dsda-doom.wad, so a wad older
+  // than the executable still compiles and links perfectly -- but nothing ever
+  // sets the uniform, and the entire scene renders black with no diagnostic.
+  // Refuse to start instead, since a black screen gives the user nothing to go
+  // on.
+  if (GLEXT_glGetUniformLocationARB(sh_main->hShader, "lightlevel") != -1)
+    I_Error("Shader \"gls_main\" declares lightlevel as a uniform, so "
+            "dsda-doom.wad is older than this executable.\n"
+            "Rebuild so that the wad and the binary match.");
 }
 
 void glsl_PushNullShader(void)
