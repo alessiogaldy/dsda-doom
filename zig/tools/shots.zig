@@ -55,6 +55,15 @@ const Case = struct {
     /// Gametics to fingerprint. The run exits after the last one, so keep them
     /// early enough that the check stays quick.
     tics: []const u8,
+    /// Extra game arguments, for a case that exists to reach a particular
+    /// drawing path rather than a particular piece of geometry.
+    ///
+    /// Configuration is set with the console's assign rather than the -assign
+    /// switch, because -assign only stores the value while the console command
+    /// goes through dsda_UpdateIntConfig and so runs the config's update hook --
+    /// which is what a player changing the setting does, and what some of these
+    /// paths need in order to be set up at all.
+    args: []const []const u8 = &.{},
 };
 
 /// Chosen for renderer coverage rather than playsim load: Sunder map 15 for
@@ -81,6 +90,60 @@ const cases = [_]Case{
         .pwad = "spec/support/wads/sunlust.wad",
         .lmp = "spec/support/lmps/sunlust/sl29m549.lmp",
         .tics = "300,1500",
+    },
+
+    // The automap, which until now no frame here opened at all -- so the ten
+    // places am_map.c asks which renderer is in use were entirely unchecked.
+    // These share one short demo and stop at an early tic, because what varies
+    // between them is which drawing path runs, not what the world looks like.
+    .{
+        .name = "automap",
+        .iwad = "spec/support/wads/DOOM2.WAD",
+        .pwad = "spec/support/wads/sunder2512.wad",
+        .lmp = "spec/support/lmps/sunder/su15p027.lmp",
+        .tics = "200",
+        .args = &.{ "-command", "automap" },
+    },
+    // Things as icons is a separate emitter under GL (gld_DrawNiceThings) and
+    // three of the mode tests are the early returns that hand over to it. The
+    // things themselves only draw at reveal level two, which is two iddts.
+    .{
+        .name = "automap_icons",
+        .iwad = "spec/support/wads/DOOM2.WAD",
+        .pwad = "spec/support/wads/sunder2512.wad",
+        .lmp = "spec/support/lmps/sunder/su15p027.lmp",
+        .tics = "200",
+        .args = &.{ "-command", "automap;assign map_things_appearance 2;iddt;iddt" },
+    },
+    // Rotation and the grid both go through the float coordinates that
+    // am_frame.precise selects, which is itself one of the mode tests.
+    .{
+        .name = "automap_rotate",
+        .iwad = "spec/support/wads/DOOM2.WAD",
+        .pwad = "spec/support/wads/sunder2512.wad",
+        .lmp = "spec/support/lmps/sunder/su15p027.lmp",
+        .tics = "200",
+        .args = &.{ "-command", "automap;assign automap_rotate 1;assign automap_grid 1" },
+    },
+    // Overlay draws the automap over the scene instead of instead of it, so
+    // both halves of the frame are built.
+    .{
+        .name = "automap_overlay",
+        .iwad = "spec/support/wads/DOOM2.WAD",
+        .pwad = "spec/support/wads/sunder2512.wad",
+        .lmp = "spec/support/lmps/sunder/su15p027.lmp",
+        .tics = "200",
+        .args = &.{ "-command", "automap;assign automap_overlay 1" },
+    },
+    // Antialiased automap lines, which only the software renderer draws, and
+    // only after the update hook has built the translucency table.
+    .{
+        .name = "automap_aa",
+        .iwad = "spec/support/wads/DOOM2.WAD",
+        .pwad = "spec/support/wads/sunder2512.wad",
+        .lmp = "spec/support/lmps/sunder/su15p027.lmp",
+        .tics = "200",
+        .args = &.{ "-command", "automap;assign map_use_multisampling 1" },
     },
 };
 
@@ -161,6 +224,7 @@ pub fn main(init: std.process.Init) !void {
             try argv.appendSlice(arena, &.{ "-geom", "640x400w", "-vidmode", mode });
             try argv.appendSlice(arena, &.{ "-framehash", case.tics });
             try argv.appendSlice(arena, &.{ "-config", cfg });
+            try argv.appendSlice(arena, case.args);
             // The device and driver name the baseline, and this is where the
             // game prints them. It logs at debug level, so nothing that is
             // drawn depends on it.
@@ -212,7 +276,7 @@ pub fn main(init: std.process.Init) !void {
                 );
                 return error.NoFrameHashes;
             }
-            std.debug.print("  {s:<10} {s}  {d} frames\n", .{ case.name, mode, found });
+            std.debug.print("  {s:<16} {s}  {d} frames\n", .{ case.name, mode, found });
         }
     }
 
@@ -280,6 +344,7 @@ pub fn main(init: std.process.Init) !void {
     }
 
     var failures: usize = 0;
+    var unchecked: usize = 0;
     for (rows.items) |row| {
         if (old.hashes.get(row.key)) |want| {
             if (!std.mem.eql(u8, want, row.hash)) {
@@ -291,12 +356,23 @@ pub fn main(init: std.process.Init) !void {
             }
         } else {
             std.debug.print("  new      {s} = {s}\n", .{ row.key, row.hash });
+            unchecked += 1;
         }
     }
 
     if (failures > 0) {
         std.debug.print("\n{d} of {d} frames differ from the baseline\n", .{ failures, rows.items.len });
         return error.RenderChanged;
+    }
+
+    // A frame the baseline has never seen was not compared against anything, so
+    // saying they all match would be the gate lying about its own coverage.
+    if (unchecked > 0) {
+        std.debug.print(
+            "\n{d} frames match, {d} new and unchecked -- record them with: zig build shots -- --save\n",
+            .{ rows.items.len - unchecked, unchecked },
+        );
+        return;
     }
     std.debug.print("\nall {d} frames match\n", .{rows.items.len});
 }
