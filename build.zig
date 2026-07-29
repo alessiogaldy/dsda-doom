@@ -352,6 +352,10 @@ pub fn build(b: *std.Build) void {
     const shots = b.addRunArtifact(shots_exe);
     shots.addArg("--bin");
     shots.addArg(b.pathJoin(&.{ b.install_prefix, "bin", project_name }));
+    // Somewhere to keep the throwaway config each run is given, so that the
+    // player's own settings cannot move the hashes.
+    shots.addArg("--workdir");
+    shots.addArg(b.cache_root.join(b.allocator, &.{"shots"}) catch @panic("OOM"));
     shots.step.dependOn(b.getInstallStep());
     shots.has_side_effects = true;
     if (b.args) |args| shots.addArgs(args);

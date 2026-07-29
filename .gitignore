@@ -11,6 +11,10 @@
 /.zig-cache/
 /zig-pkg/
 
+# Recorded frame fingerprints. Not portable between machines -- see the header
+# of zig/tools/shots.zig -- so they are recorded locally, never committed.
+/zig/frame_hashes.*.txt
+
 # spec files
 analysis.txt
 levelstat.txt
