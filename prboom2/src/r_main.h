@@ -157,6 +157,13 @@ void R_ResetColorMap(void);
 // null pointer, which fails on the first frame. It also keeps each decision
 // next to the reasoning for it, instead of splitting the policy between the
 // renderer and the caller that combines it with global state.
+//
+// It is also a call of its own rather than an argument to build_view, which
+// would be the obvious way to save a method. It cannot be: build_view and
+// draw_view only run inside a level, while letterbox_clear is read on every
+// frame, including menus, the intermission and the finale, where no view is
+// built or drawn at all. This is the only part of the interface that every
+// frame needs.
 typedef struct {
   // What the frame path knows.
   dboolean in_level;
