@@ -448,6 +448,8 @@ static dboolean D_BuildFrame(fixed_t frac)
   static dboolean borderwillneedredraw = false;
   static gamestate_t oldgamestate = GS_DEFAULT;
   dboolean viewactive = false, isborder = false;
+  dboolean redrawborderstuff = false;
+  frame_plan_t plan;
   d_frame_t *f = &d_frame;
 
   memset(f, 0, sizeof(*f));
@@ -482,8 +484,6 @@ static dboolean D_BuildFrame(fixed_t frac)
 
   f->gamestate = gamestate;
   f->in_level = (gamestate == GS_LEVEL);
-  f->letterbox_clear = (R_ViewRenderer()->letterbox_clear &&
-                        !exclusive_fullscreen && !nodrawers);
 
 
   // save the current screen if about to wipe
@@ -500,8 +500,6 @@ static dboolean D_BuildFrame(fixed_t frac)
     }
   }
   else { // In a level
-    dboolean redrawborderstuff;
-
     // Work out if the player view is visible, and if there is a border
     viewactive = automap_off && !inhelpscreens;
     isborder = viewactive ? R_PartialView() : (!inhelpscreens && automap_active);
@@ -523,8 +521,6 @@ static dboolean D_BuildFrame(fixed_t frac)
       // not only if viewactive is true
       borderwillneedredraw = borderwillneedredraw || automap_on;
     }
-
-    f->draw_border = (redrawborderstuff || R_ViewRenderer()->always_draw_border);
 
     // elim - Update viewport and scene offsets whenever the view is changed (user hits "-" or "+")
     if (redrawborderstuff)
@@ -553,7 +549,6 @@ static dboolean D_BuildFrame(fixed_t frac)
     f->automap = automap_active;
     f->st_refresh = (redrawborderstuff || BorderNeedRefresh);
     BorderNeedRefresh = false;
-    f->border_after_view = R_ViewRenderer()->border_after_view;
 
     // The copy the draw phase works from.
     f->player = players[displayplayer];
@@ -573,6 +568,18 @@ static dboolean D_BuildFrame(fixed_t frac)
       R_RestoreInterpolations();
   }
 
+  // One question to the renderer, once, with everything it needs to answer.
+  memset(&plan, 0, sizeof(plan));
+  plan.in_level           = f->in_level;
+  plan.automap            = f->automap;
+  plan.border_invalidated = redrawborderstuff;
+  plan.can_letterbox      = !exclusive_fullscreen && !nodrawers;
+  R_ViewRenderer()->plan_frame(&plan);
+
+  f->letterbox_clear   = plan.letterbox_clear;
+  f->draw_border       = plan.draw_border;
+  f->border_after_view = plan.border_after_view;
+
   isborderstate      = isborder;
   oldgamestate = wipegamestate = gamestate;
 
@@ -581,10 +588,8 @@ static dboolean D_BuildFrame(fixed_t frac)
 
   // Record the 2D half here, on the thread the simulation runs on, so it reads
   // the live player at the point in the frame it always has. The draw phase
-  // replays it after the scene. The automap is excluded because am_map issues
-  // GL directly rather than through the V_ table, and those frames do not
-  // overlap anyway.
-  if (f->in_level && !f->automap && R_ViewRenderer()->records_ui)
+  // replays it after the scene.
+  if (plan.record_ui)
   {
     V_BeginRecording();
     D_DrawFrameUI(f);

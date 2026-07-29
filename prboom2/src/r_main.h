@@ -148,6 +148,29 @@ angle_t R_PointToPseudoAngle(fixed_t x, fixed_t y);
 //
 
 void R_ResetColorMap(void);
+// How a frame is composed around the view. The frame path fills in what it
+// knows and the renderer answers with how it wants the frame put together.
+//
+// This is one call rather than a set of flags on the interface deliberately. A
+// flag left out of an initialiser is silently false, which is a behaviour
+// change no compiler and possibly no test will catch; a method left out is a
+// null pointer, which fails on the first frame. It also keeps each decision
+// next to the reasoning for it, instead of splitting the policy between the
+// renderer and the caller that combines it with global state.
+typedef struct {
+  // What the frame path knows.
+  dboolean in_level;
+  dboolean automap;
+  dboolean border_invalidated;  // something has made the view border stale
+  dboolean can_letterbox;       // the window has area outside the scene to clear
+
+  // What the renderer decides.
+  dboolean letterbox_clear;
+  dboolean draw_border;
+  dboolean border_after_view;
+  dboolean record_ui;
+} frame_plan_t;
+
 // How a renderer draws the 3D view, in the two halves the frame is split into.
 // build_view runs on the main thread and may not issue any GL; draw_view runs
 // wherever the GL context lives, which may be the render thread.
@@ -181,34 +204,11 @@ typedef struct {
   void (*begin_wipe_frame)(void);
   void (*end_wipe_frame)(void);
 
-  // How the renderer wants a frame composed around the view. These differ
-  // mainly because the GL renderer defers drawing the view to a later phase,
-  // which may be another thread, while the software renderer has already
-  // rasterised it by the time its build half returns.
+  // Builds the view matrix, if this renderer needs one.
+  void (*setup_view_matrix)(void);
 
-  // The renderer owns the whole framebuffer, so the area outside the scene has
-  // to be cleared rather than left as whatever was there before.
-  dboolean letterbox_clear;
-
-  // The view border is redrawn every frame rather than only when something
-  // invalidated it.
-  dboolean always_draw_border;
-
-  // The border is drawn after the view rather than before it, which is only
-  // possible when the view has already been rasterised.
-  dboolean border_after_view;
-
-  // The UI has to be recorded during the build half and replayed after the
-  // deferred scene draw, instead of being drawn directly.
-  dboolean records_ui;
-
-  // The view matrix carries the pitch, so freelook does not need separate
-  // handling in the projection.
-  dboolean has_view_pitch;
-
-  // A view matrix is needed for every frame. The software renderer only builds
-  // one when something else asks for it, such as the crosshair.
-  dboolean needs_view_matrix;
+  // Decides how the frame is composed around the view. See frame_plan_t.
+  void (*plan_frame)(frame_plan_t *plan);
 } view_renderer_t;
 
 const view_renderer_t *R_ViewRenderer(void);

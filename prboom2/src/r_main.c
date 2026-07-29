@@ -589,7 +589,7 @@ void R_SetupPerspective(float fovy, float aspect, float znear)
   m[14] = -2 * znear;
 }
 
-void R_BuildModelViewMatrix(void)
+static void R_BuildModelViewMatrix(dboolean with_pitch)
 {
   float x, y, z;
   float yaw, pitch;
@@ -599,7 +599,7 @@ void R_BuildModelViewMatrix(void)
   yaw = 270.0f - (float)(viewangle>>ANGLETOFINESHIFT) * 360.0f / FINEANGLES;
   yaw *= (float)M_PI / 180.0f;
   pitch = 0;
-  if (R_ViewRenderer()->has_view_pitch)
+  if (with_pitch)
   {
     pitch = (float)(viewpitch>>ANGLETOFINESHIFT) * 360.0f / FINEANGLES;
     pitch *= (float)M_PI / 180.0f;
@@ -898,7 +898,7 @@ static void R_SoftSetupFreelook(void)
 // R_SetupMatrix
 //
 
-void R_SetupMatrix(void)
+static void R_SetupMatrix(dboolean with_pitch)
 {
   float fovy, aspect, znear;
   int r_nearclip = 5;
@@ -910,7 +910,7 @@ void R_SetupMatrix(void)
   znear = (float)r_nearclip / 100.0f;
 
   R_SetupPerspective(fovy, aspect, znear);
-  R_BuildModelViewMatrix();
+  R_BuildModelViewMatrix(with_pitch);
 }
 
 void R_ResetColorMap(void)
@@ -925,8 +925,6 @@ void R_ResetColorMap(void)
 
 static void R_SetupFrame (player_t *player)
 {
-  dboolean HU_CrosshairEnabled(void);
-
   int i, cm;
 
   int FocalTangent = finetangent[FINEANGLES/4 + FieldOfView/2];
@@ -1000,8 +998,7 @@ static void R_SetupFrame (player_t *player)
 
   R_SetClipPlanes();
 
-  if (R_ViewRenderer()->needs_view_matrix || HU_CrosshairEnabled())
-    R_SetupMatrix();
+  R_ViewRenderer()->setup_view_matrix();
 
   validcount++;
 }
@@ -1185,6 +1182,56 @@ static void R_SoftNoop(void)
 {
 }
 
+// GL draws through the matrix every frame, and carries the view pitch in it.
+static void R_GLSetupViewMatrix(void)
+{
+  R_SetupMatrix(true);
+}
+
+// The software renderer projects with its own tables and only needs a matrix
+// when something else asks for one, such as the crosshair. Pitch is already in
+// those tables, so it must not be applied twice.
+static void R_SoftSetupViewMatrix(void)
+{
+  dboolean HU_CrosshairEnabled(void);
+
+  if (HU_CrosshairEnabled())
+    R_SetupMatrix(false);
+}
+
+static void R_GLPlanFrame(frame_plan_t *plan)
+{
+  // GL owns the whole framebuffer, so anything outside the scene is stale.
+  plan->letterbox_clear = plan->can_letterbox;
+
+  // The frame is cleared, so the border always has to go back down.
+  plan->draw_border = true;
+
+  // The view is drawn later, so the border cannot wait until after it.
+  plan->border_after_view = false;
+
+  // The scene is drawn later and possibly on another thread, so the UI is
+  // recorded here and replayed over it. The automap is excluded because it
+  // issues GL directly rather than through the V_ table.
+  plan->record_ui = plan->in_level && !plan->automap;
+}
+
+static void R_SoftPlanFrame(frame_plan_t *plan)
+{
+  // The renderer only ever touches the view area, so whatever surrounds it is
+  // still valid.
+  plan->letterbox_clear = false;
+
+  // Nothing overwrote the border, so redraw it only when it went stale.
+  plan->draw_border = plan->border_invalidated;
+
+  // The view is already rasterised, so the border can go over the top of it.
+  plan->border_after_view = true;
+
+  // The UI is drawn directly; there is no deferred scene to draw it over.
+  plan->record_ui = false;
+}
+
 static const view_renderer_t gl_view_renderer = {
   .build_view          = R_GLBuildView,
   .draw_view           = R_GLDrawView,
@@ -1194,12 +1241,8 @@ static const view_renderer_t gl_view_renderer = {
   .set_viewport_params = dsda_GLSetRenderViewportParams,
   .begin_wipe_frame    = R_GLBeginWipeFrame,
   .end_wipe_frame      = R_GLEndWipeFrame,
-  .letterbox_clear     = true,
-  .always_draw_border  = true,
-  .border_after_view   = false,
-  .records_ui          = true,
-  .has_view_pitch      = true,
-  .needs_view_matrix   = true,
+  .setup_view_matrix   = R_GLSetupViewMatrix,
+  .plan_frame          = R_GLPlanFrame,
 };
 
 static const view_renderer_t soft_view_renderer = {
@@ -1211,12 +1254,8 @@ static const view_renderer_t soft_view_renderer = {
   .set_viewport_params = R_SoftNoop,
   .begin_wipe_frame    = R_SoftNoop,
   .end_wipe_frame      = R_SoftNoop,
-  .letterbox_clear     = false,
-  .always_draw_border  = false,
-  .border_after_view   = true,
-  .records_ui          = false,
-  .has_view_pitch      = false,
-  .needs_view_matrix   = false,
+  .setup_view_matrix   = R_SoftSetupViewMatrix,
+  .plan_frame          = R_SoftPlanFrame,
 };
 
 // Resolved per call rather than latched at startup, because the video mode can
