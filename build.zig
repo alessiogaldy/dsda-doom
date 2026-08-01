@@ -412,6 +412,11 @@ fn linkDependencies(
         // GLU lives inside the framework on macOS, which is why CMake ends up
         // emitting -framework OpenGL twice.
         mod.linkFramework("OpenGL", .{});
+    } else if (t.os.tag == .windows) {
+        // Same ABI, different names: these are import libraries that come with
+        // the Win32 API rather than anything a package manager installs.
+        mod.linkSystemLibrary("opengl32", .{ .use_pkg_config = .no });
+        mod.linkSystemLibrary("glu32", .{ .use_pkg_config = .no });
     } else {
         mod.linkSystemLibrary("GL", .{ .use_pkg_config = .no });
         mod.linkSystemLibrary("GLU", .{ .use_pkg_config = .no });
