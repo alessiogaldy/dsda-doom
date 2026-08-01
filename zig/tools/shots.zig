@@ -381,16 +381,37 @@ pub fn main(init: std.process.Init) !void {
 /// renderer rounds its lighting through, the compiler that built it, and the
 /// driver that drew the GL half.
 fn environment(arena: std.mem.Allocator, gl_device: ?[]const u8) ![]const u8 {
-    const u = std.posix.uname();
-
-    return std.fmt.allocPrint(arena, "{s} {s} {s} | zig {d}.{d}.{d} | {s}", .{
-        std.mem.sliceTo(&u.sysname, 0),
-        std.mem.sliceTo(&u.release, 0),
-        std.mem.sliceTo(&u.machine, 0),
+    return std.fmt.allocPrint(arena, "{s} | zig {d}.{d}.{d} | {s}", .{
+        try hostOs(arena),
         builtin.zig_version.major,
         builtin.zig_version.minor,
         builtin.zig_version.patch,
         gl_device orelse "no GL device reported",
+    });
+}
+
+/// The system this is running on rather than the one it was built for, because
+/// an OS upgrade can move the pixels and only the running system knows. uname
+/// is POSIX-only; Windows keeps the same three numbers in the process
+/// environment block.
+fn hostOs(arena: std.mem.Allocator) ![]const u8 {
+    if (builtin.os.tag == .windows) {
+        const peb = std.os.windows.peb();
+
+        return std.fmt.allocPrint(arena, "Windows {d}.{d}.{d} {s}", .{
+            peb.OSMajorVersion,
+            peb.OSMinorVersion,
+            peb.OSBuildNumber,
+            @tagName(builtin.cpu.arch),
+        });
+    }
+
+    const u = std.posix.uname();
+
+    return std.fmt.allocPrint(arena, "{s} {s} {s}", .{
+        std.mem.sliceTo(&u.sysname, 0),
+        std.mem.sliceTo(&u.release, 0),
+        std.mem.sliceTo(&u.machine, 0),
     });
 }
 
