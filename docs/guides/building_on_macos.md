@@ -122,6 +122,9 @@ DSDA-Doom. The right touchpad controls aim by default. Configure it under **Opti
 **Steam Trackpad Aim** and the horizontal and vertical trackpad sensitivity values. Vertical trackpad motion controls
 free look when **Enable Free Look** is on; otherwise vertical motion is ignored.
 
+DSDA-Doom enables SDL's optional Steam Controller HIDAPI driver before controller initialization. An explicit
+`SDL_JOYSTICK_HIDAPI=0` or `SDL_JOYSTICK_HIDAPI_STEAM=0` environment override still disables it.
+
 This direct path does not require an AppID, Steamworks SDK, macOS Input Monitoring permission, or an Accessibility
 permission. SDL also exposes the controller's motion sensors, but native gyro aiming, controller-specific glyphs,
 Grip Sense, and HD haptics are not implemented yet.
@@ -139,7 +142,8 @@ If Steam detects the controller but DSDA-Doom receives no input:
    app embeds `libSDL3.dylib`; SDL 3.4.14 or newer is required for the 2026 controller's native touchpads.
 4. Inspect `controller-status.txt`. A working native connection reports `steam_controller.native: yes`,
    `active.touchpad.count: 2`, and `steam_controller.right_trackpad.available: yes`. Touch and release the right pad
-   before sharing the file so it also contains the latest touch coordinates and motion-event count.
+   before sharing the file so it also contains the latest touch coordinates and motion-event count. If
+   `joystick.count` is zero, the `raw_hid` section shows whether SDL can still enumerate the physical Valve hardware.
 
 DSDA-Doom writes `controller-status.txt` at startup, on controller connection changes, and when controller button,
 axis, or touchpad input arrives. The report includes the effective controller configuration, SDL versions and

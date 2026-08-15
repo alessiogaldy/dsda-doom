@@ -16,6 +16,7 @@
 //
 
 #include "SDL.h"
+#include "SDL_hidapi.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -73,6 +74,34 @@ static void dsda_WriteGameControllerEnvironment(FILE* file, const char* name) {
 
   fprintf(file, "environment.%s: %s\n", name,
           value && *value ? value : "<unset>");
+}
+
+static void dsda_WriteSteamHIDDevices(FILE* file) {
+  SDL_hid_device_info* devices;
+  SDL_hid_device_info* device;
+  int count = 0;
+
+  devices = SDL_hid_enumerate(DSDA_STEAM_CONTROLLER_VENDOR, 0);
+  for (device = devices; device; device = device->next) {
+    fprintf(file, "raw_hid[%d].path: %s\n", count,
+            dsda_ControllerText(device->path));
+    fprintf(file, "raw_hid[%d].vendor: 0x%04x\n", count,
+            device->vendor_id);
+    fprintf(file, "raw_hid[%d].product: 0x%04x\n", count,
+            device->product_id);
+    fprintf(file, "raw_hid[%d].release: 0x%04x\n", count,
+            device->release_number);
+    fprintf(file, "raw_hid[%d].usage_page: 0x%04x\n", count,
+            device->usage_page);
+    fprintf(file, "raw_hid[%d].usage: 0x%04x\n", count,
+            device->usage);
+    fprintf(file, "raw_hid[%d].interface: %d\n", count,
+            device->interface_number);
+    ++count;
+  }
+
+  fprintf(file, "raw_hid.count: %d\n", count);
+  SDL_hid_free_enumeration(devices);
 }
 
 static void dsda_WriteGameControllerStatus(const char* event) {
@@ -142,6 +171,8 @@ static void dsda_WriteGameControllerStatus(const char* event) {
           dsda_ControllerText(SDL_GetHint(SDL_HINT_JOYSTICK_ALLOW_BACKGROUND_EVENTS)));
   fprintf(file, "SDL.hint.joystick_hidapi: %s\n",
           dsda_ControllerText(SDL_GetHint(SDL_HINT_JOYSTICK_HIDAPI)));
+  fprintf(file, "SDL.hint.joystick_hidapi_steam: %s\n",
+          dsda_ControllerText(SDL_GetHint(SDL_HINT_JOYSTICK_HIDAPI_STEAM)));
   fprintf(file, "\n");
 
   dsda_WriteGameControllerEnvironment(file, "SteamAppId");
@@ -154,6 +185,9 @@ static void dsda_WriteGameControllerStatus(const char* event) {
   dsda_WriteGameControllerEnvironment(
     file, "SDL_GAMECONTROLLER_IGNORE_DEVICES_EXCEPT"
   );
+  fprintf(file, "\n");
+
+  dsda_WriteSteamHIDDevices(file);
   fprintf(file, "\n");
 
   if (!(initialized & SDL_INIT_JOYSTICK)) {
@@ -574,6 +608,20 @@ void dsda_InitGameController(void) {
   }
 
 #ifdef __APPLE__
+  // SDL's direct HIDAPI driver for Steam Controllers is optional. Enable it
+  // before joystick initialization so the physical 2026 controller remains
+  // usable when the Apple GameController backend is unavailable or Steam is
+  // also running. Preserve explicit user overrides for diagnostics.
+  if (!SDL_GetHint(SDL_HINT_JOYSTICK_HIDAPI) &&
+      SDL_SetHint(SDL_HINT_JOYSTICK_HIDAPI, "1") != SDL_TRUE)
+    lprintf(LO_WARN, "Could not enable SDL HIDAPI controller detection: %s\n",
+            SDL_GetError());
+
+  if (!SDL_GetHint(SDL_HINT_JOYSTICK_HIDAPI_STEAM) &&
+      SDL_SetHint(SDL_HINT_JOYSTICK_HIDAPI_STEAM, "1") != SDL_TRUE)
+    lprintf(LO_WARN, "Could not enable the SDL Steam Controller HIDAPI driver: %s\n",
+            SDL_GetError());
+
   // SDL filters Steam's virtual Xbox gamepad by default. Steam normally
   // opts games into it through this environment variable, but macOS
   // non-Steam shortcuts do not consistently receive it. Set the missing
