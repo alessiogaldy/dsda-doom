@@ -10,6 +10,9 @@ const Options = struct {
     license: []const u8,
     plist_template: []const u8,
     output: []const u8,
+    dev_output: []const u8,
+    game_iwad: []const u8,
+    game_wad: []const u8,
     version: []const u8,
     system_sdl: bool,
 };
@@ -24,6 +27,37 @@ const troubleshooting =
     \\To add DSDA-Doom to Steam, move DSDA-Doom.app to Applications, choose
     \\Games > Add a Non-Steam Game, and browse to the application. Steam Input
     \\can then map the Steam Controller to gamepad and mouse input.
+    \\
+;
+
+const launcher_with_pwad =
+    \\#!/bin/sh
+    \\set -eu
+    \\app_dir="$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)"
+    \\contents_dir="$app_dir/Contents"
+    \\dev_wads="$(dirname -- "$app_dir")/DSDA-Doom-WADs"
+    \\iwad="$dev_wads/iwad.wad"
+    \\pwad="$dev_wads/selected.wad"
+    \\if [ ! -f "$iwad" ] || [ ! -f "$pwad" ]; then
+    \\  /usr/bin/osascript -e 'display alert "DSDA-Doom development WAD is missing" message "Check the -Dapp-iwad and -Dapp-wad paths used by zig build."' >/dev/null 2>&1 || true
+    \\  exit 1
+    \\fi
+    \\exec "$contents_dir/MacOS/dsda-doom-bin" -iwad "$iwad" -file "$pwad" "$@"
+    \\
+;
+
+const launcher_without_pwad =
+    \\#!/bin/sh
+    \\set -eu
+    \\app_dir="$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)"
+    \\contents_dir="$app_dir/Contents"
+    \\dev_wads="$(dirname -- "$app_dir")/DSDA-Doom-WADs"
+    \\iwad="$dev_wads/iwad.wad"
+    \\if [ ! -f "$iwad" ]; then
+    \\  /usr/bin/osascript -e 'display alert "DSDA-Doom development IWAD is missing" message "Check the -Dapp-iwad path used by zig build."' >/dev/null 2>&1 || true
+    \\  exit 1
+    \\fi
+    \\exec "$contents_dir/MacOS/dsda-doom-bin" -iwad "$iwad" "$@"
     \\
 ;
 
@@ -183,6 +217,62 @@ pub fn main(init: std.process.Init) !void {
         package_dir,
         options.output,
     });
+
+    try createDevelopmentApp(arena, io, options, app_dir);
+}
+
+fn createDevelopmentApp(
+    allocator: std.mem.Allocator,
+    io: Io,
+    options: Options,
+    release_app: []const u8,
+) !void {
+    const cwd = Io.Dir.cwd();
+    cwd.deleteTree(io, options.dev_output) catch {};
+    _ = try runChecked(allocator, io, &.{ "/usr/bin/ditto", release_app, options.dev_output });
+
+    const contents_dir = try std.fs.path.join(allocator, &.{ options.dev_output, "Contents" });
+    const macos_dir = try std.fs.path.join(allocator, &.{ contents_dir, "MacOS" });
+    const dev_prefix = std.fs.path.dirname(options.dev_output) orelse ".";
+    const dev_wads_dir = try std.fs.path.join(allocator, &.{ dev_prefix, "DSDA-Doom-WADs" });
+    const launcher = try std.fs.path.join(allocator, &.{ macos_dir, "dsda-doom" });
+    const real_executable = try std.fs.path.join(allocator, &.{ macos_dir, "dsda-doom-bin" });
+    const iwad_link = try std.fs.path.join(allocator, &.{ dev_wads_dir, "iwad.wad" });
+
+    try Io.Dir.rename(cwd, launcher, cwd, real_executable, io);
+    cwd.deleteTree(io, dev_wads_dir) catch {};
+    try cwd.createDirPath(io, dev_wads_dir);
+    try cwd.symLink(io, options.game_iwad, iwad_link, .{});
+
+    const launcher_source = if (options.game_wad.len == 0)
+        launcher_without_pwad
+    else blk: {
+        const wad_link = try std.fs.path.join(allocator, &.{ dev_wads_dir, "selected.wad" });
+        try cwd.symLink(io, options.game_wad, wad_link, .{});
+        break :blk launcher_with_pwad;
+    };
+    try cwd.writeFile(io, .{ .sub_path = launcher, .data = launcher_source });
+    _ = try runChecked(allocator, io, &.{ "/bin/chmod", "+x", launcher });
+
+    // Adding the launcher changes the bundle resource seal, and moving the
+    // Mach-O invalidates its bundle-aware signature. Sign the renamed
+    // executable and development app again after all mutations.
+    _ = try runChecked(allocator, io, &.{
+        "/usr/bin/codesign",
+        "--force",
+        "--sign",
+        "-",
+        "--timestamp=none",
+        real_executable,
+    });
+    _ = try runChecked(allocator, io, &.{
+        "/usr/bin/codesign",
+        "--force",
+        "--sign",
+        "-",
+        "--timestamp=none",
+        options.dev_output,
+    });
 }
 
 fn parseOptions(args: []const []const u8) !Options {
@@ -192,6 +282,9 @@ fn parseOptions(args: []const []const u8) !Options {
     var license: ?[]const u8 = null;
     var plist_template: ?[]const u8 = null;
     var output: ?[]const u8 = null;
+    var dev_output: ?[]const u8 = null;
+    var game_iwad: ?[]const u8 = null;
+    var game_wad: ?[]const u8 = null;
     var package_version: ?[]const u8 = null;
     var system_sdl = false;
 
@@ -217,6 +310,12 @@ fn parseOptions(args: []const []const u8) !Options {
             plist_template = value;
         } else if (std.mem.eql(u8, arg, "--output")) {
             output = value;
+        } else if (std.mem.eql(u8, arg, "--dev-output")) {
+            dev_output = value;
+        } else if (std.mem.eql(u8, arg, "--game-iwad")) {
+            game_iwad = value;
+        } else if (std.mem.eql(u8, arg, "--game-wad")) {
+            game_wad = value;
         } else if (std.mem.eql(u8, arg, "--version")) {
             package_version = value;
         } else {
@@ -231,6 +330,9 @@ fn parseOptions(args: []const []const u8) !Options {
         .license = license orelse return error.MissingLicense,
         .plist_template = plist_template orelse return error.MissingPlistTemplate,
         .output = output orelse return error.MissingOutput,
+        .dev_output = dev_output orelse return error.MissingDevOutput,
+        .game_iwad = game_iwad orelse return error.MissingGameIwad,
+        .game_wad = game_wad orelse return error.MissingGameWad,
         .version = package_version orelse return error.MissingVersion,
         .system_sdl = system_sdl,
     };

@@ -29,13 +29,42 @@ mise install zig
 The default Zig build compiles its library dependencies from source. Homebrew libraries are only used when explicitly
 enabled with Zig's `-fsys=<name>` options.
 
-## Building
+## Building a development application
 
-Build and install a release binary and the internal WAD into `zig-out/bin`:
+The development application uses the same local WAD fixtures as the regression specs. Put `DOOM2.WAD` and
+`rush.wad` in `spec/support/wads` as described in [`spec/README.md`](../../spec/README.md). These files are ignored by
+git and are not redistributed.
+
+Build the command-line files and development application with:
 
 ```
 mise exec zig -- zig build -Doptimize=ReleaseFast
 ```
+
+This produces:
+
+```
+zig-out/bin/dsda-doom
+zig-out/bin/dsda-doom.wad
+zig-out/DSDA-Doom.app
+zig-out/DSDA-Doom-WADs/iwad.wad
+zig-out/DSDA-Doom-WADs/selected.wad
+```
+
+The two files under `DSDA-Doom-WADs` are symlinks into `spec/support/wads`. The signed application stays valid
+because the development links live beside, rather than inside, the bundle. Double-clicking the app launches
+`DOOM2.WAD` with `rush.wad` by default.
+
+Select another PWAD or base IWAD with `-Dapp-wad` and `-Dapp-iwad`:
+
+```
+mise exec zig -- zig build \
+  -Doptimize=ReleaseFast \
+  -Dapp-iwad=/path/to/DOOM2.WAD \
+  -Dapp-wad=/path/to/sunlust.wad
+```
+
+Pass an empty `-Dapp-wad=` to launch only the selected IWAD.
 
 ## Installing
 
@@ -45,8 +74,8 @@ Choose another install prefix with Zig's `--prefix` option:
 mise exec zig -- zig build -Doptimize=ReleaseFast --prefix /custom/install/prefix
 ```
 
-The ordinary install remains a loose `bin/dsda-doom` and `bin/dsda-doom.wad`. Application packaging is a separate
-build step.
+The ordinary install contains the loose `bin/dsda-doom`, `bin/dsda-doom.wad`, and the development application.
+Release packaging is a separate build step.
 
 ## Packaging
 
@@ -56,11 +85,12 @@ Build, ad hoc sign, validate, and archive the application with:
 mise exec zig -- zig build package-macos -Doptimize=ReleaseFast
 ```
 
-This generates `dsda-doom-x.y.z-mac-<architecture>.zip`. The archive contains an ad hoc-signed
-`DSDA-Doom.app` with its internal WAD, license, icon, and dynamic libraries. The application can be moved to
-`/Applications` and opened normally. Zig's default vendored build has no Homebrew dylibs; when system integrations
-such as `-fsys=sdl2` are requested, the package step rewrites and collects those dependencies into
-`Contents/Frameworks`, including SDL3 for Homebrew's `sdl2-compat`.
+This validates `zig-out/DSDA-Doom.app` and generates `dsda-doom-x.y.z-mac-<architecture>.zip`. The archive contains
+a portable, ad hoc-signed `DSDA-Doom.app` with its internal WAD, license, icon, and dynamic libraries. It deliberately
+excludes the local development WAD links, so users must provide their own IWAD. The archived application can be moved
+to `/Applications`. Zig's default vendored build has no Homebrew dylibs; when system integrations such as
+`-fsys=sdl2` are requested, the package step rewrites and collects those dependencies into `Contents/Frameworks`,
+including SDL3 for Homebrew's `sdl2-compat`.
 
 The application is not notarized with an Apple Developer ID. If macOS reports that it cannot verify the application,
 remove its quarantine attribute:

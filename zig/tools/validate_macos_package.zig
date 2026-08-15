@@ -1,4 +1,4 @@
-//! Validate the archive emitted by package_macos.zig.
+//! Validate the archive and development app emitted by package_macos.zig.
 
 const std = @import("std");
 const Io = std.Io;
@@ -9,14 +9,21 @@ pub fn main(init: std.process.Init) !void {
     const args = try init.minimal.args.toSlice(arena);
 
     var package: ?[]const u8 = null;
+    var dev_app: ?[]const u8 = null;
     var expect_universal = false;
+    var dev_has_pwad = false;
     var i: usize = 1;
     while (i < args.len) : (i += 1) {
         if (std.mem.eql(u8, args[i], "--universal")) {
             expect_universal = true;
+        } else if (std.mem.eql(u8, args[i], "--dev-pwad")) {
+            dev_has_pwad = true;
         } else if (std.mem.eql(u8, args[i], "--package") and i + 1 < args.len) {
             i += 1;
             package = args[i];
+        } else if (std.mem.eql(u8, args[i], "--dev-app") and i + 1 < args.len) {
+            i += 1;
+            dev_app = args[i];
         } else {
             return error.InvalidArguments;
         }
@@ -148,6 +155,99 @@ pub fn main(init: std.process.Init) !void {
     });
 
     std.debug.print("Validated {s}\n", .{app_dir});
+
+    if (dev_app) |dev_app_dir| {
+        try validateDevelopmentApp(
+            arena,
+            io,
+            dev_app_dir,
+            validation_dir,
+            expect_universal,
+            dev_has_pwad,
+        );
+    }
+}
+
+fn validateDevelopmentApp(
+    allocator: std.mem.Allocator,
+    io: Io,
+    app_dir: []const u8,
+    validation_dir: []const u8,
+    expect_universal: bool,
+    has_pwad: bool,
+) !void {
+    const cwd = Io.Dir.cwd();
+    const contents_dir = try std.fs.path.join(allocator, &.{ app_dir, "Contents" });
+    const macos_dir = try std.fs.path.join(allocator, &.{ contents_dir, "MacOS" });
+    const frameworks_dir = try std.fs.path.join(allocator, &.{ contents_dir, "Frameworks" });
+    const launcher = try std.fs.path.join(allocator, &.{ macos_dir, "dsda-doom" });
+    const executable = try std.fs.path.join(allocator, &.{ macos_dir, "dsda-doom-bin" });
+    const app_prefix = std.fs.path.dirname(app_dir) orelse ".";
+    const dev_wads_dir = try std.fs.path.join(allocator, &.{ app_prefix, "DSDA-Doom-WADs" });
+    const iwad_link = try std.fs.path.join(allocator, &.{ dev_wads_dir, "iwad.wad" });
+
+    for ([_][]const u8{ launcher, executable, iwad_link }) |required| {
+        cwd.access(io, required, .{}) catch |err| {
+            std.debug.print("validate-macos-package: missing {s}: {t}\n", .{ required, err });
+            return error.MissingDevelopmentFile;
+        };
+    }
+    _ = try runChecked(allocator, io, &.{ "/usr/bin/readlink", iwad_link });
+    if (has_pwad) {
+        const pwad_link = try std.fs.path.join(allocator, &.{ dev_wads_dir, "selected.wad" });
+        cwd.access(io, pwad_link, .{}) catch |err| {
+            std.debug.print("validate-macos-package: missing {s}: {t}\n", .{ pwad_link, err });
+            return error.MissingDevelopmentFile;
+        };
+        _ = try runChecked(allocator, io, &.{ "/usr/bin/readlink", pwad_link });
+    }
+
+    _ = try runChecked(allocator, io, &.{
+        "/usr/bin/codesign",
+        "--verify",
+        "--deep",
+        "--strict",
+        "--verbose=2",
+        app_dir,
+    });
+
+    var mach_o_files: std.ArrayList([]const u8) = .empty;
+    try mach_o_files.append(allocator, executable);
+    const find_result = try runChecked(allocator, io, &.{
+        "/usr/bin/find",
+        frameworks_dir,
+        "-type",
+        "f",
+        "-name",
+        "*.dylib",
+        "-print",
+    });
+    var paths = std.mem.tokenizeScalar(u8, find_result.stdout, '\n');
+    while (paths.next()) |path| try mach_o_files.append(allocator, path);
+    for (mach_o_files.items) |mach_o_file| {
+        const otool_result = try runChecked(allocator, io, &.{ "/usr/bin/otool", "-L", mach_o_file });
+        if (std.mem.indexOf(u8, otool_result.stdout, "/opt/homebrew/") != null or
+            std.mem.indexOf(u8, otool_result.stdout, "/usr/local/") != null)
+        {
+            return error.NonRelocatableDependency;
+        }
+    }
+
+    if (expect_universal) {
+        const lipo_result = try runChecked(allocator, io, &.{ "/usr/bin/lipo", "-info", executable });
+        if (std.mem.indexOf(u8, lipo_result.stdout, "arm64") == null or
+            std.mem.indexOf(u8, lipo_result.stdout, "x86_64") == null)
+        {
+            return error.NotUniversal;
+        }
+    }
+
+    const test_home = try std.fs.path.join(allocator, &.{ validation_dir, "dev-home" });
+    try cwd.createDirPath(io, test_home);
+    const home_assignment = try std.fmt.allocPrint(allocator, "HOME={s}", .{test_home});
+    _ = try runChecked(allocator, io, &.{ "/usr/bin/env", home_assignment, launcher, "--help" });
+
+    std.debug.print("Validated development app {s}\n", .{app_dir});
 }
 
 fn runChecked(

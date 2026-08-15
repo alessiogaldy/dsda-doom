@@ -397,6 +397,24 @@ fn addMacPackage(
         version,
         package_arch,
     });
+    const app_iwad = absoluteInputPath(
+        b,
+        b.option(
+            []const u8,
+            "app-iwad",
+            "Base IWAD linked into the development app",
+        ) orelse "spec/support/wads/DOOM2.WAD",
+    );
+    const app_wad_option = b.option(
+        []const u8,
+        "app-wad",
+        "PWAD linked and loaded by the development app (empty to disable)",
+    ) orelse "spec/support/wads/rush.wad";
+    const app_wad = if (app_wad_option.len == 0)
+        ""
+    else
+        absoluteInputPath(b, app_wad_option);
+    const development_app = b.getInstallPath(.prefix, "DSDA-Doom.app");
 
     const package_tool = b.addExecutable(.{
         .name = "package_macos",
@@ -417,9 +435,25 @@ fn addMacPackage(
     package_run.addFileArg(b.path("prboom2/COPYING"));
     package_run.addArg("--plist-template");
     package_run.addFileArg(b.path("zig/macos/Info.plist.in"));
-    package_run.addArgs(&.{ "--version", version, "--output" });
+    package_run.addArgs(&.{
+        "--version",
+        version,
+        "--dev-output",
+        development_app,
+        "--game-iwad",
+        app_iwad,
+        "--game-wad",
+        app_wad,
+        "--output",
+    });
     const package_output = package_run.addOutputFileArg(package_name);
     if (system_sdl) package_run.addArg("--system-sdl");
+    package_run.has_side_effects = true;
+
+    // A normal macOS `zig build` installs the command-line binary and also
+    // leaves a Finder/Steam-launchable development app in the prefix. The ZIP
+    // remains exclusive to the explicit package-macos step.
+    b.getInstallStep().dependOn(&package_run.step);
 
     const validate_tool = b.addExecutable(.{
         .name = "validate_macos_package",
@@ -432,6 +466,8 @@ fn addMacPackage(
     const validate_run = b.addRunArtifact(validate_tool);
     validate_run.addArg("--package");
     validate_run.addFileArg(package_output);
+    validate_run.addArgs(&.{ "--dev-app", development_app });
+    if (app_wad.len != 0) validate_run.addArg("--dev-pwad");
     if (std.mem.eql(u8, package_arch, "uni") or
         std.mem.eql(u8, package_arch, "universal"))
     {
@@ -451,6 +487,11 @@ fn addMacPackage(
 fn packageInputPath(b: *std.Build, path: []const u8) std.Build.LazyPath {
     if (std.fs.path.isAbsolute(path)) return .{ .cwd_relative = b.dupe(path) };
     return b.path(path);
+}
+
+fn absoluteInputPath(b: *std.Build, path: []const u8) []const u8 {
+    if (std.fs.path.isAbsolute(path)) return b.dupe(path);
+    return b.pathFromRoot(path);
 }
 
 /// Artifacts built from source, exposed so `zig build check-deps` can smoke-test
