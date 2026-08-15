@@ -52,5 +52,7 @@ void dsda_PollGameControllerButtons(void);
 void dsda_InitGameController(void);
 void dsda_GameControllerAdded(int device_index);
 void dsda_GameControllerRemoved(int instance_id);
+void dsda_GameControllerButtonEvent(int button, int pressed);
+void dsda_GameControllerAxisEvent(int axis, int value);
 
 #endif

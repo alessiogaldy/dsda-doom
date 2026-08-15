@@ -398,8 +398,16 @@ static void I_GetEvent(void)
 
       case SDL_CONTROLLERBUTTONDOWN:
       case SDL_CONTROLLERBUTTONUP:
+        dsda_GameControllerButtonEvent(
+          Event->cbutton.button,
+          Event->type == SDL_CONTROLLERBUTTONDOWN
+        );
         if (dsda_AllowGameController())
           dsda_PollGameControllerButtons();
+        break;
+
+      case SDL_CONTROLLERAXISMOTION:
+        dsda_GameControllerAxisEvent(Event->caxis.axis, Event->caxis.value);
         break;
 
       case SDL_CONTROLLERDEVICEADDED:

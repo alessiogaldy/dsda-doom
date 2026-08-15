@@ -137,3 +137,16 @@ If Steam detects the controller but DSDA-Doom receives no input:
    launch options if present.
 4. Build without `-fno-sys=sdl2`. The default app embeds `libSDL3.dylib`, and package validation confirms that it
    includes the Apple GameController backend used to enumerate Steam's virtual gamepad.
+
+DSDA-Doom writes `controller-status.txt` at startup, on controller connection changes, and when controller button or
+axis input arrives. The report includes the effective controller configuration, SDL versions and initialization
+state, Steam launch environment, every enumerated joystick and mapping, the active controller, and the most recent
+input event. Find the report with:
+
+```
+find "$HOME/Library/Application Support/dsda-doom" "$HOME/.dsda-doom" \
+  -name controller-status.txt -print 2>/dev/null
+```
+
+The legacy `~/.dsda-doom` directory takes precedence when it already exists, so configuration and the status report
+may be there instead of under `Library/Application Support`.
