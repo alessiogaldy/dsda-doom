@@ -1308,6 +1308,18 @@ dsda_config_t dsda_config[dsda_config_count] = {
     "right_analog_sensitivity_y", dsda_config_right_analog_sensitivity_y,
     dsda_config_int, 0, 16384, { 768 }, NULL, NOT_STRICT, dsda_InitGameControllerParameters
   },
+  [dsda_config_steam_controller_trackpad_aim] = {
+    "steam_controller_trackpad_aim", dsda_config_steam_controller_trackpad_aim,
+    CONF_BOOL(1), NULL, NOT_STRICT, dsda_InitGameControllerParameters
+  },
+  [dsda_config_steam_controller_trackpad_sensitivity_x] = {
+    "steam_controller_trackpad_sensitivity_x", dsda_config_steam_controller_trackpad_sensitivity_x,
+    dsda_config_int, 0, 65536, { 32768 }, NULL, NOT_STRICT, dsda_InitGameControllerParameters
+  },
+  [dsda_config_steam_controller_trackpad_sensitivity_y] = {
+    "steam_controller_trackpad_sensitivity_y", dsda_config_steam_controller_trackpad_sensitivity_y,
+    dsda_config_int, 0, 65536, { 16384 }, NULL, NOT_STRICT, dsda_InitGameControllerParameters
+  },
   [dsda_config_analog_look_acceleration] = {
     "analog_look_acceleration", dsda_config_analog_look_acceleration,
     dsda_config_int, 0, INT_MAX, { 0 }, NULL, NOT_STRICT, AccelChanging

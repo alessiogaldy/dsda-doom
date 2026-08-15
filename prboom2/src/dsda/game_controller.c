@@ -41,6 +41,25 @@ static char game_controller_input[256] = "none";
 static unsigned long game_controller_input_events;
 static int game_controller_axis_state[SDL_CONTROLLER_AXIS_MAX];
 
+#define DSDA_STEAM_CONTROLLER_VENDOR 0x28de
+#define DSDA_STEAM_CONTROLLER_FIRST_PRODUCT 0x1302
+#define DSDA_STEAM_CONTROLLER_LAST_PRODUCT 0x1305
+#define DSDA_STEAM_CONTROLLER_RIGHT_TOUCHPAD 1
+
+static int game_controller_touchpad_count;
+static int steam_controller_native;
+static int steam_controller_trackpad_available;
+static int steam_controller_trackpad_aim;
+static int steam_controller_trackpad_sensitivity_x;
+static int steam_controller_trackpad_sensitivity_y;
+static int steam_controller_right_touch_down;
+static float steam_controller_right_touch_x;
+static float steam_controller_right_touch_y;
+static float steam_controller_right_touch_dx;
+static float steam_controller_right_touch_dy;
+static float steam_controller_right_touch_pressure;
+static unsigned long steam_controller_right_touch_motion_events;
+
 static const char* dsda_ControllerText(const char* text) {
   return text && *text ? text : "<none>";
 }
@@ -111,6 +130,8 @@ static void dsda_WriteGameControllerStatus(const char* event) {
   fprintf(file, "SDL.runtime_version: %d.%d.%d\n",
           runtime_version.major, runtime_version.minor, runtime_version.patch);
   fprintf(file, "SDL.revision: %s\n", dsda_ControllerText(SDL_GetRevision()));
+  fprintf(file, "SDL.compat_sdl3_version: %s\n",
+          dsda_ControllerText(SDL_GetHint("SDL3_VERSION")));
   fprintf(file, "SDL.platform: %s\n", dsda_ControllerText(SDL_GetPlatform()));
   fprintf(file, "SDL.initialized_flags: 0x%08x\n", initialized);
   fprintf(file, "SDL.gamecontroller_initialized: %s\n",
@@ -187,15 +208,46 @@ static void dsda_WriteGameControllerStatus(const char* event) {
   if (game_controller) {
     int axis;
     int button;
+    int touchpad;
     char* mapping = SDL_GameControllerMapping(game_controller);
 
     fprintf(file, "active.name: %s\n",
             dsda_ControllerText(SDL_GameControllerName(game_controller)));
     fprintf(file, "active.instance_id: %d\n", game_controller_instance);
+    fprintf(file, "active.vendor: 0x%04x\n",
+            SDL_GameControllerGetVendor(game_controller));
+    fprintf(file, "active.product: 0x%04x\n",
+            SDL_GameControllerGetProduct(game_controller));
     fprintf(file, "active.attached: %s\n",
             SDL_GameControllerGetAttached(game_controller) ? "yes" : "no");
     fprintf(file, "active.mapping: %s\n", mapping ? mapping : "<none>");
     SDL_free(mapping);
+
+    fprintf(file, "active.touchpad.count: %d\n", game_controller_touchpad_count);
+    for (touchpad = 0; touchpad < game_controller_touchpad_count; ++touchpad)
+      fprintf(file, "active.touchpad[%d].fingers: %d\n", touchpad,
+              SDL_GameControllerGetNumTouchpadFingers(game_controller, touchpad));
+
+    fprintf(file, "steam_controller.native: %s\n",
+            steam_controller_native ? "yes" : "no");
+    fprintf(file, "steam_controller.right_trackpad.available: %s\n",
+            steam_controller_trackpad_available ? "yes" : "no");
+    fprintf(file, "steam_controller.right_trackpad.aim_enabled: %s\n",
+            steam_controller_trackpad_aim ? "yes" : "no");
+    fprintf(file, "steam_controller.right_trackpad.sensitivity_x: %d\n",
+            steam_controller_trackpad_sensitivity_x);
+    fprintf(file, "steam_controller.right_trackpad.sensitivity_y: %d\n",
+            steam_controller_trackpad_sensitivity_y);
+    fprintf(file, "steam_controller.right_trackpad.touch_down: %s\n",
+            steam_controller_right_touch_down ? "yes" : "no");
+    fprintf(file, "steam_controller.right_trackpad.x: %.6f\n",
+            steam_controller_right_touch_x);
+    fprintf(file, "steam_controller.right_trackpad.y: %.6f\n",
+            steam_controller_right_touch_y);
+    fprintf(file, "steam_controller.right_trackpad.pressure: %.6f\n",
+            steam_controller_right_touch_pressure);
+    fprintf(file, "steam_controller.right_trackpad.motion_events: %lu\n",
+            steam_controller_right_touch_motion_events);
 
     for (axis = 0; axis < SDL_CONTROLLER_AXIS_MAX; ++axis)
       fprintf(file, "active.axis.%s: %d\n",
@@ -300,6 +352,28 @@ static void dsda_PollRightStick(void) {
     D_PostEvent(&ev);
 }
 
+static void dsda_PollSteamControllerTrackpad(void) {
+  event_t ev;
+
+  if (!steam_controller_trackpad_available ||
+      !steam_controller_trackpad_aim)
+    return;
+
+  ev.type = ev_look_analog;
+  ev.data1.f =
+    steam_controller_right_touch_dx * steam_controller_trackpad_sensitivity_x;
+  ev.data2.f =
+    -steam_controller_right_touch_dy * steam_controller_trackpad_sensitivity_y;
+
+  if (ev.data1.f || ev.data2.f)
+    D_PostEvent(&ev);
+}
+
+void dsda_DiscardGameControllerMotion(void) {
+  steam_controller_right_touch_dx = 0;
+  steam_controller_right_touch_dy = 0;
+}
+
 static inline int PollButton(dsda_game_controller_button_t button)
 {
   // This depends on enums having same values
@@ -354,6 +428,8 @@ void dsda_PollGameController(void) {
   dsda_PollGameControllerButtons();
   dsda_PollLeftStick();
   dsda_PollRightStick();
+  dsda_PollSteamControllerTrackpad();
+  dsda_DiscardGameControllerMotion();
 }
 
 void dsda_InitGameControllerParameters(void) {
@@ -373,6 +449,12 @@ void dsda_InitGameControllerParameters(void) {
   right_trigger.sensitivity = 1;
 
   swap_analogs = dsda_IntConfig(dsda_config_swap_analogs);
+  steam_controller_trackpad_aim =
+    dsda_IntConfig(dsda_config_steam_controller_trackpad_aim);
+  steam_controller_trackpad_sensitivity_x =
+    dsda_IntConfig(dsda_config_steam_controller_trackpad_sensitivity_x);
+  steam_controller_trackpad_sensitivity_y =
+    dsda_IntConfig(dsda_config_steam_controller_trackpad_sensitivity_y);
 }
 
 static void dsda_ReleaseGameControllerButtons(void) {
@@ -384,13 +466,31 @@ static void dsda_ReleaseGameControllerButtons(void) {
 }
 
 static void dsda_CloseGameController(void) {
-  if (!game_controller)
-    return;
+  if (game_controller) {
+    dsda_ReleaseGameControllerButtons();
+    SDL_GameControllerClose(game_controller);
+  }
 
-  dsda_ReleaseGameControllerButtons();
-  SDL_GameControllerClose(game_controller);
   game_controller = NULL;
   game_controller_instance = -1;
+  game_controller_touchpad_count = 0;
+  steam_controller_native = false;
+  steam_controller_trackpad_available = false;
+  steam_controller_right_touch_down = false;
+  steam_controller_right_touch_x = 0;
+  steam_controller_right_touch_y = 0;
+  steam_controller_right_touch_pressure = 0;
+  steam_controller_right_touch_motion_events = 0;
+  dsda_DiscardGameControllerMotion();
+}
+
+static int dsda_IsNativeSteamController(SDL_GameController* controller) {
+  Uint16 vendor = SDL_GameControllerGetVendor(controller);
+  Uint16 product = SDL_GameControllerGetProduct(controller);
+
+  return vendor == DSDA_STEAM_CONTROLLER_VENDOR &&
+         product >= DSDA_STEAM_CONTROLLER_FIRST_PRODUCT &&
+         product <= DSDA_STEAM_CONTROLLER_LAST_PRODUCT;
 }
 
 static int dsda_OpenGameController(int device_index) {
@@ -424,11 +524,27 @@ static int dsda_OpenGameController(int device_index) {
     return false;
   }
 
+  game_controller_touchpad_count =
+    SDL_GameControllerGetNumTouchpads(game_controller);
+  steam_controller_native = dsda_IsNativeSteamController(game_controller);
+  steam_controller_trackpad_available =
+    steam_controller_native &&
+    game_controller_touchpad_count > DSDA_STEAM_CONTROLLER_RIGHT_TOUCHPAD &&
+    SDL_GameControllerGetNumTouchpadFingers(
+      game_controller, DSDA_STEAM_CONTROLLER_RIGHT_TOUCHPAD
+    ) > 0;
+
   lprintf(LO_DEBUG, "Opened game controller %s\n",
           SDL_GameControllerName(game_controller));
-  snprintf(game_controller_status, sizeof(game_controller_status),
-           "opened device %d (%s)", device_index,
-           dsda_ControllerText(SDL_GameControllerName(game_controller)));
+  if (steam_controller_trackpad_available)
+    snprintf(game_controller_status, sizeof(game_controller_status),
+             "opened device %d (%s); native right trackpad aim available",
+             device_index,
+             dsda_ControllerText(SDL_GameControllerName(game_controller)));
+  else
+    snprintf(game_controller_status, sizeof(game_controller_status),
+             "opened device %d (%s)", device_index,
+             dsda_ControllerText(SDL_GameControllerName(game_controller)));
 
   return true;
 }
@@ -551,4 +667,75 @@ void dsda_GameControllerAxisEvent(int axis, int value) {
            "axis %s changed to %d", dsda_ControllerText(
              SDL_GameControllerGetStringForAxis(axis)), value);
   dsda_WriteGameControllerStatus("controller axis input");
+}
+
+void dsda_GameControllerTouchpadEvent(
+  int instance_id,
+  unsigned int event_type,
+  int touchpad,
+  int finger,
+  float x,
+  float y,
+  float pressure
+) {
+  const char* action;
+  int right_trackpad;
+
+  if (!game_controller || instance_id != game_controller_instance)
+    return;
+
+  if (event_type == SDL_CONTROLLERTOUCHPADDOWN)
+    action = "touched";
+  else if (event_type == SDL_CONTROLLERTOUCHPADUP)
+    action = "released";
+  else
+    action = "moved";
+
+  ++game_controller_input_events;
+  snprintf(game_controller_input, sizeof(game_controller_input),
+           "touchpad %d finger %d %s at %.4f,%.4f (pressure %.4f)",
+           touchpad, finger, action, x, y, pressure);
+
+  right_trackpad =
+    steam_controller_trackpad_available &&
+    touchpad == DSDA_STEAM_CONTROLLER_RIGHT_TOUCHPAD &&
+    finger == 0;
+  if (!right_trackpad) {
+    if (event_type != SDL_CONTROLLERTOUCHPADMOTION)
+      dsda_WriteGameControllerStatus("controller touchpad input");
+    return;
+  }
+
+  if (event_type == SDL_CONTROLLERTOUCHPADDOWN) {
+    steam_controller_right_touch_down = true;
+    steam_controller_right_touch_x = x;
+    steam_controller_right_touch_y = y;
+    steam_controller_right_touch_pressure = pressure;
+    dsda_DiscardGameControllerMotion();
+    dsda_WriteGameControllerStatus("native right trackpad touched");
+    return;
+  }
+
+  if (event_type == SDL_CONTROLLERTOUCHPADMOTION) {
+    if (steam_controller_right_touch_down) {
+      steam_controller_right_touch_dx += x - steam_controller_right_touch_x;
+      steam_controller_right_touch_dy += y - steam_controller_right_touch_y;
+    }
+    else {
+      // Establish a baseline if SDL delivered motion after a missed down event.
+      steam_controller_right_touch_down = true;
+    }
+
+    steam_controller_right_touch_x = x;
+    steam_controller_right_touch_y = y;
+    steam_controller_right_touch_pressure = pressure;
+    ++steam_controller_right_touch_motion_events;
+    return;
+  }
+
+  steam_controller_right_touch_down = false;
+  steam_controller_right_touch_x = x;
+  steam_controller_right_touch_y = y;
+  steam_controller_right_touch_pressure = pressure;
+  dsda_WriteGameControllerStatus("native right trackpad released");
 }

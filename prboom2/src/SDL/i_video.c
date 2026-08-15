@@ -410,6 +410,20 @@ static void I_GetEvent(void)
         dsda_GameControllerAxisEvent(Event->caxis.axis, Event->caxis.value);
         break;
 
+      case SDL_CONTROLLERTOUCHPADDOWN:
+      case SDL_CONTROLLERTOUCHPADMOTION:
+      case SDL_CONTROLLERTOUCHPADUP:
+        dsda_GameControllerTouchpadEvent(
+          Event->ctouchpad.which,
+          Event->type,
+          Event->ctouchpad.touchpad,
+          Event->ctouchpad.finger,
+          Event->ctouchpad.x,
+          Event->ctouchpad.y,
+          Event->ctouchpad.pressure
+        );
+        break;
+
       case SDL_CONTROLLERDEVICEADDED:
         dsda_GameControllerAdded(Event->cdevice.which);
         break;
@@ -466,6 +480,8 @@ void I_StartTic (void)
 
   if (dsda_AllowGameController())
     dsda_PollGameController();
+  else
+    dsda_DiscardGameControllerMotion();
 }
 
 //

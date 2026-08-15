@@ -26,10 +26,10 @@ brew bundle
 mise install zig
 ```
 
-On macOS, the Zig build uses Homebrew's `sdl2-compat` and SDL3 by default. SDL3 includes Apple's GameController
-backend, which Steam's virtual gamepad needs. The remaining libraries are compiled from source. Pass
-`-fno-sys=sdl2` to use the vendored SDL build for diagnostics, but that build cannot currently enumerate Steam's
-virtual controller on macOS.
+On macOS, the Zig build uses Homebrew's `sdl2-compat` and SDL3 by default. SDL 3.4.14 and newer include the direct
+driver for the 2026 Steam Controller, including its two touchpads. The remaining libraries are compiled from source.
+Pass `-fno-sys=sdl2` to use the vendored SDL build for diagnostics, but that SDL2 build does not include the 2026
+Steam Controller driver.
 
 ## Building a development application
 
@@ -108,8 +108,8 @@ xattr -dr com.apple.quarantine /Applications/DSDA-Doom.app
 1. Extract the package and move `DSDA-Doom.app` to `/Applications`.
 2. In Steam, choose **Games > Add a Non-Steam Game to My Library**.
 3. Browse to `/Applications`, select `DSDA-Doom.app`, and add it.
-4. In the shortcut's controller settings, enable Steam Input and start from **Gamepad With High Precision
-   Camera/Aim** for gamepad controls with trackpad/gyro mouse aim.
+4. Open the shortcut's controller settings and select **Disable Steam Input**. DSDA-Doom reads the physical controller
+   directly through SDL; Steam Input must not hide it behind a virtual gamepad.
 
 After replacing an older development app that used the shell launcher, remove its non-Steam shortcut and add the app
 again so Steam discovers the native executable.
@@ -117,31 +117,34 @@ again so Steam discovers the native executable.
 Fresh DSDA-Doom configurations enable the first supported controller automatically. An existing configuration with
 `use_game_controller 0`, or a launch using `-nojoy`, continues to disable controller input.
 
-Steam Input presents the 2026 Steam Controller as standard gamepad and mouse input. Buttons, sticks, triggers, and the
-D-pad use DSDA-Doom's existing controller bindings; trackpads and gyro can be assigned to mouse or gamepad actions in
-Steam's configurator. Valve's
-[gamepad emulation guidance](https://partner.steamgames.com/doc/features/steam_controller/steam_input_gamepad_emulation_bestpractices)
-describes this compatibility path. This package does not integrate the Steamworks Input API, controller-specific
-glyphs, Grip Sense, direct touchpad coordinates, or HD haptics.
+SDL presents the 2026 Steam Controller's buttons, sticks, triggers, D-pad, paddles, and touchpads directly to
+DSDA-Doom. The right touchpad controls aim by default. Configure it under **Options > General > Controller** with
+**Steam Trackpad Aim** and the horizontal and vertical trackpad sensitivity values. Vertical trackpad motion controls
+free look when **Enable Free Look** is on; otherwise vertical motion is ignored.
+
+This direct path does not require an AppID, Steamworks SDK, macOS Input Monitoring permission, or an Accessibility
+permission. SDL also exposes the controller's motion sensors, but native gyro aiming, controller-specific glyphs,
+Grip Sense, and HD haptics are not implemented yet.
 
 If Steam detects the controller but DSDA-Doom receives no input:
 
-1. Confirm that the Steam Overlay opens in the game. Steam Input configuration may not attach to a non-Steam game if
-   the overlay does not attach.
-2. In **System Settings > Privacy & Security > Input Monitoring**, allow Steam. For trackpad or gyro mouse mappings,
-   also allow Steam under **Accessibility**, then restart Steam. These permissions are required by
-   [Valve's macOS troubleshooting guidance](https://help.steampowered.com/en/faqs/view/33E8-5EDF-24E6-4CFB).
-3. Confirm **Enable Controller** is on in DSDA-Doom, or set `use_game_controller 1` in the existing configuration.
+1. Confirm that the shortcut is set to **Disable Steam Input**, then quit and relaunch the game. With Steam Input
+   enabled, Steam may add the physical controller to `SDL_GAMECONTROLLER_IGNORE_DEVICES` without providing a usable
+   virtual replacement to a macOS non-Steam shortcut.
+2. Confirm **Enable Controller** is on in DSDA-Doom, or set `use_game_controller 1` in the existing configuration.
    On macOS the configuration is at `~/Library/Application Support/dsda-doom/dsda-doom.cfg`; it is created after
    DSDA-Doom saves its configuration, so a missing file is not itself an error. Remove `-nojoy` from the shortcut's
    launch options if present.
-4. Build without `-fno-sys=sdl2`. The default app embeds `libSDL3.dylib`, and package validation confirms that it
-   includes the Apple GameController backend used to enumerate Steam's virtual gamepad.
+3. Build without `-fno-sys=sdl2` and update the Homebrew libraries with `brew upgrade sdl3 sdl2-compat`. The default
+   app embeds `libSDL3.dylib`; SDL 3.4.14 or newer is required for the 2026 controller's native touchpads.
+4. Inspect `controller-status.txt`. A working native connection reports `steam_controller.native: yes`,
+   `active.touchpad.count: 2`, and `steam_controller.right_trackpad.available: yes`. Touch and release the right pad
+   before sharing the file so it also contains the latest touch coordinates and motion-event count.
 
-DSDA-Doom writes `controller-status.txt` at startup, on controller connection changes, and when controller button or
-axis input arrives. The report includes the effective controller configuration, SDL versions and initialization
-state, Steam launch environment, every enumerated joystick and mapping, the active controller, and the most recent
-input event. Find the report with:
+DSDA-Doom writes `controller-status.txt` at startup, on controller connection changes, and when controller button,
+axis, or touchpad input arrives. The report includes the effective controller configuration, SDL versions and
+initialization state, Steam launch environment, every enumerated joystick and mapping, native touchpad availability,
+the active controller, and the most recent input event. Find the report with:
 
 ```
 find "$HOME/Library/Application Support/dsda-doom" "$HOME/.dsda-doom" \
@@ -151,6 +154,6 @@ find "$HOME/Library/Application Support/dsda-doom" "$HOME/.dsda-doom" \
 The legacy `~/.dsda-doom` directory takes precedence when it already exists, so configuration and the status report
 may be there instead of under `Library/Application Support`.
 
-When launched by Steam on macOS, DSDA-Doom opts into SDL's Steam virtual gamepad before initializing the controller
-subsystem. Steam normally supplies `SDL_GAMECONTROLLER_ALLOW_STEAM_VIRTUAL_GAMEPAD=1`, but non-Steam shortcuts do not
-consistently receive it. The effective value is included in `controller-status.txt`.
+When Steam Input is intentionally enabled, DSDA-Doom still opts into SDL's virtual gamepad as a compatibility fallback
+for other controllers. Native right-trackpad aiming requires the physical 2026 Steam Controller, so use **Disable
+Steam Input** for this controller.

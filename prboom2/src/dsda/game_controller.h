@@ -48,11 +48,21 @@ typedef enum {
 
 const char* dsda_GameControllerButtonName(int button);
 void dsda_PollGameController(void);
+void dsda_DiscardGameControllerMotion(void);
 void dsda_PollGameControllerButtons(void);
 void dsda_InitGameController(void);
 void dsda_GameControllerAdded(int device_index);
 void dsda_GameControllerRemoved(int instance_id);
 void dsda_GameControllerButtonEvent(int button, int pressed);
 void dsda_GameControllerAxisEvent(int axis, int value);
+void dsda_GameControllerTouchpadEvent(
+  int instance_id,
+  unsigned int event_type,
+  int touchpad,
+  int finger,
+  float x,
+  float y,
+  float pressure
+);
 
 #endif
