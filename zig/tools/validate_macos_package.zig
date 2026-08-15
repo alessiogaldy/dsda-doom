@@ -181,12 +181,11 @@ fn validateDevelopmentApp(
     const macos_dir = try std.fs.path.join(allocator, &.{ contents_dir, "MacOS" });
     const resources_dir = try std.fs.path.join(allocator, &.{ contents_dir, "Resources" });
     const frameworks_dir = try std.fs.path.join(allocator, &.{ contents_dir, "Frameworks" });
-    const launcher = try std.fs.path.join(allocator, &.{ macos_dir, "dsda-doom" });
-    const executable = try std.fs.path.join(allocator, &.{ macos_dir, "dsda-doom-bin" });
+    const executable = try std.fs.path.join(allocator, &.{ macos_dir, "dsda-doom" });
     const dev_wads_dir = try std.fs.path.join(allocator, &.{ resources_dir, "WADs" });
     const iwad_file = try std.fs.path.join(allocator, &.{ dev_wads_dir, "iwad.wad" });
 
-    for ([_][]const u8{ launcher, executable, iwad_file }) |required| {
+    for ([_][]const u8{ executable, iwad_file }) |required| {
         cwd.access(io, required, .{}) catch |err| {
             std.debug.print("validate-macos-package: missing {s}: {t}\n", .{ required, err });
             return error.MissingDevelopmentFile;
@@ -194,6 +193,9 @@ fn validateDevelopmentApp(
     }
     _ = try runChecked(allocator, io, &.{ "/bin/test", "-f", iwad_file });
     _ = try runChecked(allocator, io, &.{ "/bin/test", "!", "-L", iwad_file });
+    const file_result = try runChecked(allocator, io, &.{ "/usr/bin/file", executable });
+    if (std.mem.indexOf(u8, file_result.stdout, "Mach-O") == null)
+        return error.DevelopmentExecutableIsNotMachO;
     if (has_pwad) {
         const pwad_file = try std.fs.path.join(allocator, &.{ dev_wads_dir, "selected.wad" });
         cwd.access(io, pwad_file, .{}) catch |err| {
@@ -249,11 +251,11 @@ fn validateDevelopmentApp(
     const home_assignment = try std.fmt.allocPrint(allocator, "HOME={s}", .{test_home});
     const relocated_app = try std.fs.path.join(allocator, &.{ validation_dir, "DSDA-Doom-development.app" });
     _ = try runChecked(allocator, io, &.{ "/usr/bin/ditto", app_dir, relocated_app });
-    const relocated_launcher = try std.fs.path.join(
+    const relocated_executable = try std.fs.path.join(
         allocator,
         &.{ relocated_app, "Contents", "MacOS", "dsda-doom" },
     );
-    _ = try runChecked(allocator, io, &.{ "/usr/bin/env", home_assignment, relocated_launcher, "--help" });
+    _ = try runChecked(allocator, io, &.{ "/usr/bin/env", home_assignment, relocated_executable, "--help" });
 
     std.debug.print("Validated development app {s}\n", .{app_dir});
 }

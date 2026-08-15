@@ -53,7 +53,8 @@ zig-out/DSDA-Doom.app/Contents/Resources/WADs/selected.wad
 
 The selected WADs are copied into the signed bundle, making `DSDA-Doom.app` self-contained and safe to move elsewhere.
 Double-clicking the app launches `DOOM2.WAD` with `rush.wad` by default. Rebuild the app after changing either source
-WAD.
+WAD. The bundle exposes the native DSDA-Doom Mach-O directly so Steam can associate its overlay and Steam Input with
+the game process.
 
 Select another PWAD or base IWAD with `-Dapp-wad` and `-Dapp-iwad`:
 
@@ -104,7 +105,11 @@ xattr -dr com.apple.quarantine /Applications/DSDA-Doom.app
 1. Extract the package and move `DSDA-Doom.app` to `/Applications`.
 2. In Steam, choose **Games > Add a Non-Steam Game to My Library**.
 3. Browse to `/Applications`, select `DSDA-Doom.app`, and add it.
-4. In the shortcut's controller settings, enable Steam Input and start from the standard gamepad template.
+4. In the shortcut's controller settings, enable Steam Input and start from **Gamepad With High Precision
+   Camera/Aim** for gamepad controls with trackpad/gyro mouse aim.
+
+After replacing an older development app that used the shell launcher, remove its non-Steam shortcut and add the app
+again so Steam discovers the native executable.
 
 Fresh DSDA-Doom configurations enable the first supported controller automatically. An existing configuration with
 `use_game_controller 0`, or a launch using `-nojoy`, continues to disable controller input.
@@ -115,3 +120,14 @@ Steam's configurator. Valve's
 [gamepad emulation guidance](https://partner.steamgames.com/doc/features/steam_controller/steam_input_gamepad_emulation_bestpractices)
 describes this compatibility path. This package does not integrate the Steamworks Input API, controller-specific
 glyphs, Grip Sense, direct touchpad coordinates, or HD haptics.
+
+If Steam detects the controller but DSDA-Doom receives no input:
+
+1. Confirm that the Steam Overlay opens in the game. Steam Input configuration may not attach to a non-Steam game if
+   the overlay does not attach.
+2. In **System Settings > Privacy & Security > Input Monitoring**, allow Steam. For trackpad or gyro mouse mappings,
+   also allow Steam under **Accessibility**, then restart Steam. These permissions are required by
+   [Valve's macOS troubleshooting guidance](https://help.steampowered.com/en/faqs/view/33E8-5EDF-24E6-4CFB).
+3. Confirm **Enable Controller** is on in DSDA-Doom, or set `use_game_controller 1` in the existing configuration.
+   On macOS the configuration is at `~/Library/Application Support/dsda-doom/dsda-doom.cfg`. Remove `-nojoy` from
+   the shortcut's launch options if present.

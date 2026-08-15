@@ -30,37 +30,6 @@ const troubleshooting =
     \\
 ;
 
-const launcher_with_pwad =
-    \\#!/bin/sh
-    \\set -eu
-    \\app_dir="$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)"
-    \\contents_dir="$app_dir/Contents"
-    \\dev_wads="$contents_dir/Resources/WADs"
-    \\iwad="$dev_wads/iwad.wad"
-    \\pwad="$dev_wads/selected.wad"
-    \\if [ ! -f "$iwad" ] || [ ! -f "$pwad" ]; then
-    \\  /usr/bin/osascript -e 'display alert "DSDA-Doom development WAD is missing" message "Check the -Dapp-iwad and -Dapp-wad paths used by zig build."' >/dev/null 2>&1 || true
-    \\  exit 1
-    \\fi
-    \\exec "$contents_dir/MacOS/dsda-doom-bin" -iwad "$iwad" -file "$pwad" "$@"
-    \\
-;
-
-const launcher_without_pwad =
-    \\#!/bin/sh
-    \\set -eu
-    \\app_dir="$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)"
-    \\contents_dir="$app_dir/Contents"
-    \\dev_wads="$contents_dir/Resources/WADs"
-    \\iwad="$dev_wads/iwad.wad"
-    \\if [ ! -f "$iwad" ]; then
-    \\  /usr/bin/osascript -e 'display alert "DSDA-Doom development IWAD is missing" message "Check the -Dapp-iwad path used by zig build."' >/dev/null 2>&1 || true
-    \\  exit 1
-    \\fi
-    \\exec "$contents_dir/MacOS/dsda-doom-bin" -iwad "$iwad" "$@"
-    \\
-;
-
 pub fn main(init: std.process.Init) !void {
     const io = init.io;
     const arena = init.arena.allocator();
@@ -232,41 +201,23 @@ fn createDevelopmentApp(
     _ = try runChecked(allocator, io, &.{ "/usr/bin/ditto", release_app, options.dev_output });
 
     const contents_dir = try std.fs.path.join(allocator, &.{ options.dev_output, "Contents" });
-    const macos_dir = try std.fs.path.join(allocator, &.{ contents_dir, "MacOS" });
     const resources_dir = try std.fs.path.join(allocator, &.{ contents_dir, "Resources" });
     const dev_prefix = std.fs.path.dirname(options.dev_output) orelse ".";
     const legacy_dev_wads_dir = try std.fs.path.join(allocator, &.{ dev_prefix, "DSDA-Doom-WADs" });
     const dev_wads_dir = try std.fs.path.join(allocator, &.{ resources_dir, "WADs" });
-    const launcher = try std.fs.path.join(allocator, &.{ macos_dir, "dsda-doom" });
-    const real_executable = try std.fs.path.join(allocator, &.{ macos_dir, "dsda-doom-bin" });
     const iwad_file = try std.fs.path.join(allocator, &.{ dev_wads_dir, "iwad.wad" });
 
-    try Io.Dir.rename(cwd, launcher, cwd, real_executable, io);
     cwd.deleteTree(io, legacy_dev_wads_dir) catch {};
     try cwd.createDirPath(io, dev_wads_dir);
     _ = try runChecked(allocator, io, &.{ "/usr/bin/ditto", options.game_iwad, iwad_file });
 
-    const launcher_source = if (options.game_wad.len == 0)
-        launcher_without_pwad
-    else blk: {
+    if (options.game_wad.len != 0) {
         const wad_file = try std.fs.path.join(allocator, &.{ dev_wads_dir, "selected.wad" });
         _ = try runChecked(allocator, io, &.{ "/usr/bin/ditto", options.game_wad, wad_file });
-        break :blk launcher_with_pwad;
-    };
-    try cwd.writeFile(io, .{ .sub_path = launcher, .data = launcher_source });
-    _ = try runChecked(allocator, io, &.{ "/bin/chmod", "+x", launcher });
+    }
 
-    // Adding the launcher and WADs changes the bundle resource seal, and
-    // moving the Mach-O invalidates its bundle-aware signature. Sign the
-    // renamed executable and development app again after all mutations.
-    _ = try runChecked(allocator, io, &.{
-        "/usr/bin/codesign",
-        "--force",
-        "--sign",
-        "-",
-        "--timestamp=none",
-        real_executable,
-    });
+    // Adding the development WADs changes the bundle resource seal. Sign the
+    // development app again after all mutations.
     _ = try runChecked(allocator, io, &.{
         "/usr/bin/codesign",
         "--force",

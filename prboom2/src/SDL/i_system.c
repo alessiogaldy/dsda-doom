@@ -82,6 +82,7 @@
 
 #include "z_zone.h"
 
+#include "dsda/args.h"
 #include "dsda/settings.h"
 #include "dsda/signal_context.h"
 #include "dsda/time.h"
@@ -449,6 +450,36 @@ static const char *I_GetBasePath(void)
   if (!executable_dir)
     executable_dir = SDL_GetBasePath();
   return executable_dir;
+}
+
+void I_ConfigureBundleGameWads(void)
+{
+#ifdef __APPLE__
+  const char *base_path = I_GetBasePath();
+  char *wads_dir;
+  char *iwad;
+  char *pwad;
+
+  if (!base_path)
+    return;
+
+  wads_dir = dsda_ConcatDir(base_path, "WADs");
+  iwad = dsda_ConcatDir(wads_dir, "iwad.wad");
+  pwad = dsda_ConcatDir(wads_dir, "selected.wad");
+
+  if (M_ReadAccess(iwad))
+  {
+    if (!dsda_Arg(dsda_arg_iwad)->found)
+      dsda_UpdateStringArg(dsda_arg_iwad, iwad);
+
+    if (M_ReadAccess(pwad) && !dsda_Arg(dsda_arg_file)->found)
+      dsda_AppendStringArg(dsda_arg_file, pwad);
+  }
+
+  Z_Free(pwad);
+  Z_Free(iwad);
+  Z_Free(wads_dir);
+#endif
 }
 
 /*
