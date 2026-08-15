@@ -402,13 +402,13 @@ fn addMacPackage(
         b.option(
             []const u8,
             "app-iwad",
-            "Base IWAD linked into the development app",
+            "Base IWAD copied into the development app",
         ) orelse "spec/support/wads/DOOM2.WAD",
     );
     const app_wad_option = b.option(
         []const u8,
         "app-wad",
-        "PWAD linked and loaded by the development app (empty to disable)",
+        "PWAD copied and loaded by the development app (empty to disable)",
     ) orelse "spec/support/wads/rush.wad";
     const app_wad = if (app_wad_option.len == 0)
         ""

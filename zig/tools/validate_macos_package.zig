@@ -179,27 +179,29 @@ fn validateDevelopmentApp(
     const cwd = Io.Dir.cwd();
     const contents_dir = try std.fs.path.join(allocator, &.{ app_dir, "Contents" });
     const macos_dir = try std.fs.path.join(allocator, &.{ contents_dir, "MacOS" });
+    const resources_dir = try std.fs.path.join(allocator, &.{ contents_dir, "Resources" });
     const frameworks_dir = try std.fs.path.join(allocator, &.{ contents_dir, "Frameworks" });
     const launcher = try std.fs.path.join(allocator, &.{ macos_dir, "dsda-doom" });
     const executable = try std.fs.path.join(allocator, &.{ macos_dir, "dsda-doom-bin" });
-    const app_prefix = std.fs.path.dirname(app_dir) orelse ".";
-    const dev_wads_dir = try std.fs.path.join(allocator, &.{ app_prefix, "DSDA-Doom-WADs" });
-    const iwad_link = try std.fs.path.join(allocator, &.{ dev_wads_dir, "iwad.wad" });
+    const dev_wads_dir = try std.fs.path.join(allocator, &.{ resources_dir, "WADs" });
+    const iwad_file = try std.fs.path.join(allocator, &.{ dev_wads_dir, "iwad.wad" });
 
-    for ([_][]const u8{ launcher, executable, iwad_link }) |required| {
+    for ([_][]const u8{ launcher, executable, iwad_file }) |required| {
         cwd.access(io, required, .{}) catch |err| {
             std.debug.print("validate-macos-package: missing {s}: {t}\n", .{ required, err });
             return error.MissingDevelopmentFile;
         };
     }
-    _ = try runChecked(allocator, io, &.{ "/usr/bin/readlink", iwad_link });
+    _ = try runChecked(allocator, io, &.{ "/bin/test", "-f", iwad_file });
+    _ = try runChecked(allocator, io, &.{ "/bin/test", "!", "-L", iwad_file });
     if (has_pwad) {
-        const pwad_link = try std.fs.path.join(allocator, &.{ dev_wads_dir, "selected.wad" });
-        cwd.access(io, pwad_link, .{}) catch |err| {
-            std.debug.print("validate-macos-package: missing {s}: {t}\n", .{ pwad_link, err });
+        const pwad_file = try std.fs.path.join(allocator, &.{ dev_wads_dir, "selected.wad" });
+        cwd.access(io, pwad_file, .{}) catch |err| {
+            std.debug.print("validate-macos-package: missing {s}: {t}\n", .{ pwad_file, err });
             return error.MissingDevelopmentFile;
         };
-        _ = try runChecked(allocator, io, &.{ "/usr/bin/readlink", pwad_link });
+        _ = try runChecked(allocator, io, &.{ "/bin/test", "-f", pwad_file });
+        _ = try runChecked(allocator, io, &.{ "/bin/test", "!", "-L", pwad_file });
     }
 
     _ = try runChecked(allocator, io, &.{
@@ -245,7 +247,13 @@ fn validateDevelopmentApp(
     const test_home = try std.fs.path.join(allocator, &.{ validation_dir, "dev-home" });
     try cwd.createDirPath(io, test_home);
     const home_assignment = try std.fmt.allocPrint(allocator, "HOME={s}", .{test_home});
-    _ = try runChecked(allocator, io, &.{ "/usr/bin/env", home_assignment, launcher, "--help" });
+    const relocated_app = try std.fs.path.join(allocator, &.{ validation_dir, "DSDA-Doom-development.app" });
+    _ = try runChecked(allocator, io, &.{ "/usr/bin/ditto", app_dir, relocated_app });
+    const relocated_launcher = try std.fs.path.join(
+        allocator,
+        &.{ relocated_app, "Contents", "MacOS", "dsda-doom" },
+    );
+    _ = try runChecked(allocator, io, &.{ "/usr/bin/env", home_assignment, relocated_launcher, "--help" });
 
     std.debug.print("Validated development app {s}\n", .{app_dir});
 }

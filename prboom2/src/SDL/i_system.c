@@ -478,6 +478,11 @@ char* I_FindFileInternal(const char* wfname, const char* ext, dboolean isStatic)
     const char *(*func)(void); // for functions that return the directory
   } search0[] = {
     {NULL, NULL, NULL, I_ExeDir}, // executable directory
+#ifdef __APPLE__
+    // Prefer an application bundle's resource directory over build-time
+    // install paths, which may still exist on the machine that built the app.
+    {NULL, "../Resources", NULL, I_GetBasePath},
+#endif
 #if !defined(_WIN32) && !defined(AMIGA)
     {NULL, NULL, NULL, I_ConfigDir}, // config and autoload directory. on windows/amiga, this is the same as I_ExeDir
 #endif
@@ -486,9 +491,6 @@ char* I_FindFileInternal(const char* wfname, const char* ext, dboolean isStatic)
     {DOOMWADDIR}, // build-time configured DOOMWADDIR
     {DSDA_ABSOLUTE_PWAD_PATH}, // build-time configured absolute path to dsda-doom.wad
     {NULL, NULL, NULL, I_GetBasePath}, // search the base path provided by SDL
-#ifdef __APPLE__
-    {NULL, "../Resources", NULL, I_GetBasePath}, // macOS application bundle resources
-#endif
     {NULL, "../share/games/doom", NULL, I_GetBasePath}, // AppImage
     {NULL, "doom", "HOME"}, // ~/doom
     {NULL, NULL, "HOME"}, // ~

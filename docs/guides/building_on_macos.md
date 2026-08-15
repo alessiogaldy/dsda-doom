@@ -33,7 +33,7 @@ enabled with Zig's `-fsys=<name>` options.
 
 The development application uses the same local WAD fixtures as the regression specs. Put `DOOM2.WAD` and
 `rush.wad` in `spec/support/wads` as described in [`spec/README.md`](../../spec/README.md). These files are ignored by
-git and are not redistributed.
+git and are copied only into the local development application; they are not included in the release archive.
 
 Build the command-line files and development application with:
 
@@ -47,13 +47,13 @@ This produces:
 zig-out/bin/dsda-doom
 zig-out/bin/dsda-doom.wad
 zig-out/DSDA-Doom.app
-zig-out/DSDA-Doom-WADs/iwad.wad
-zig-out/DSDA-Doom-WADs/selected.wad
+zig-out/DSDA-Doom.app/Contents/Resources/WADs/iwad.wad
+zig-out/DSDA-Doom.app/Contents/Resources/WADs/selected.wad
 ```
 
-The two files under `DSDA-Doom-WADs` are symlinks into `spec/support/wads`. The signed application stays valid
-because the development links live beside, rather than inside, the bundle. Double-clicking the app launches
-`DOOM2.WAD` with `rush.wad` by default.
+The selected WADs are copied into the signed bundle, making `DSDA-Doom.app` self-contained and safe to move elsewhere.
+Double-clicking the app launches `DOOM2.WAD` with `rush.wad` by default. Rebuild the app after changing either source
+WAD.
 
 Select another PWAD or base IWAD with `-Dapp-wad` and `-Dapp-iwad`:
 
@@ -86,11 +86,11 @@ mise exec zig -- zig build package-macos -Doptimize=ReleaseFast
 ```
 
 This validates `zig-out/DSDA-Doom.app` and generates `dsda-doom-x.y.z-mac-<architecture>.zip`. The archive contains
-a portable, ad hoc-signed `DSDA-Doom.app` with its internal WAD, license, icon, and dynamic libraries. It deliberately
-excludes the local development WAD links, so users must provide their own IWAD. The archived application can be moved
-to `/Applications`. Zig's default vendored build has no Homebrew dylibs; when system integrations such as
-`-fsys=sdl2` are requested, the package step rewrites and collects those dependencies into `Contents/Frameworks`,
-including SDL3 for Homebrew's `sdl2-compat`.
+a portable, ad hoc-signed `DSDA-Doom.app` with its internal WAD, license, icon, and dynamic libraries. It is created
+before the development WADs are embedded and deliberately excludes them, so users must provide their own IWAD. The
+archived application can be moved to `/Applications`. Zig's default vendored build has no Homebrew dylibs; when
+system integrations such as `-fsys=sdl2` are requested, the package step rewrites and collects those dependencies
+into `Contents/Frameworks`, including SDL3 for Homebrew's `sdl2-compat`.
 
 The application is not notarized with an Apple Developer ID. If macOS reports that it cannot verify the application,
 remove its quarantine attribute:
