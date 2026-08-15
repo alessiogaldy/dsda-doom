@@ -126,6 +126,13 @@ static void dsda_WriteGameControllerStatus(const char* event) {
   dsda_WriteGameControllerEnvironment(file, "SteamAppId");
   dsda_WriteGameControllerEnvironment(file, "SteamGameId");
   dsda_WriteGameControllerEnvironment(file, "SteamOverlayGameId");
+  dsda_WriteGameControllerEnvironment(
+    file, "SDL_GAMECONTROLLER_ALLOW_STEAM_VIRTUAL_GAMEPAD"
+  );
+  dsda_WriteGameControllerEnvironment(file, "SDL_GAMECONTROLLER_IGNORE_DEVICES");
+  dsda_WriteGameControllerEnvironment(
+    file, "SDL_GAMECONTROLLER_IGNORE_DEVICES_EXCEPT"
+  );
   fprintf(file, "\n");
 
   if (!(initialized & SDL_INIT_JOYSTICK)) {
@@ -449,6 +456,19 @@ void dsda_InitGameController(void) {
     dsda_WriteGameControllerStatus("controller initialization");
     return;
   }
+
+#ifdef __APPLE__
+  // SDL filters Steam's virtual Xbox gamepad by default. Steam normally
+  // opts games into it through this environment variable, but macOS
+  // non-Steam shortcuts do not consistently receive it. Set the missing
+  // opt-in before SDL scans for controllers, while respecting any value
+  // explicitly supplied by Steam or the user.
+  if ((SDL_getenv("SteamGameId") || SDL_getenv("SteamAppId")) &&
+      !SDL_getenv("SDL_GAMECONTROLLER_ALLOW_STEAM_VIRTUAL_GAMEPAD") &&
+      SDL_setenv("SDL_GAMECONTROLLER_ALLOW_STEAM_VIRTUAL_GAMEPAD", "1", 0) < 0)
+    lprintf(LO_WARN, "Could not enable SDL Steam virtual gamepad detection: %s\n",
+            SDL_GetError());
+#endif
 
   dsda_InitGameControllerParameters();
   if (SDL_InitSubSystem(SDL_INIT_GAMECONTROLLER) < 0) {

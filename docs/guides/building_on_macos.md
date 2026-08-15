@@ -150,3 +150,7 @@ find "$HOME/Library/Application Support/dsda-doom" "$HOME/.dsda-doom" \
 
 The legacy `~/.dsda-doom` directory takes precedence when it already exists, so configuration and the status report
 may be there instead of under `Library/Application Support`.
+
+When launched by Steam on macOS, DSDA-Doom opts into SDL's Steam virtual gamepad before initializing the controller
+subsystem. Steam normally supplies `SDL_GAMECONTROLLER_ALLOW_STEAM_VIRTUAL_GAMEPAD=1`, but non-Steam shortcuts do not
+consistently receive it. The effective value is included in `controller-status.txt`.
