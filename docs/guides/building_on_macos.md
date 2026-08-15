@@ -26,8 +26,10 @@ brew bundle
 mise install zig
 ```
 
-The default Zig build compiles its library dependencies from source. Homebrew libraries are only used when explicitly
-enabled with Zig's `-fsys=<name>` options.
+On macOS, the Zig build uses Homebrew's `sdl2-compat` and SDL3 by default. SDL3 includes Apple's GameController
+backend, which Steam's virtual gamepad needs. The remaining libraries are compiled from source. Pass
+`-fno-sys=sdl2` to use the vendored SDL build for diagnostics, but that build cannot currently enumerate Steam's
+virtual controller on macOS.
 
 ## Building a development application
 
@@ -89,9 +91,10 @@ mise exec zig -- zig build package-macos -Doptimize=ReleaseFast
 This validates `zig-out/DSDA-Doom.app` and generates `dsda-doom-x.y.z-mac-<architecture>.zip`. The archive contains
 a portable, ad hoc-signed `DSDA-Doom.app` with its internal WAD, license, icon, and dynamic libraries. It is created
 before the development WADs are embedded and deliberately excludes them, so users must provide their own IWAD. The
-archived application can be moved to `/Applications`. Zig's default vendored build has no Homebrew dylibs; when
-system integrations such as `-fsys=sdl2` are requested, the package step rewrites and collects those dependencies
-into `Contents/Frameworks`, including SDL3 for Homebrew's `sdl2-compat`.
+archived application can be moved to `/Applications`. The package step rewrites and collects Homebrew's SDL2
+compatibility library, SDL3, and their dynamic dependencies into `Contents/Frameworks`; the resulting application
+does not depend on Homebrew paths at runtime. Package validation also verifies that the bundled SDL3 links Apple's
+GameController framework.
 
 The application is not notarized with an Apple Developer ID. If macOS reports that it cannot verify the application,
 remove its quarantine attribute:
@@ -129,5 +132,8 @@ If Steam detects the controller but DSDA-Doom receives no input:
    also allow Steam under **Accessibility**, then restart Steam. These permissions are required by
    [Valve's macOS troubleshooting guidance](https://help.steampowered.com/en/faqs/view/33E8-5EDF-24E6-4CFB).
 3. Confirm **Enable Controller** is on in DSDA-Doom, or set `use_game_controller 1` in the existing configuration.
-   On macOS the configuration is at `~/Library/Application Support/dsda-doom/dsda-doom.cfg`. Remove `-nojoy` from
-   the shortcut's launch options if present.
+   On macOS the configuration is at `~/Library/Application Support/dsda-doom/dsda-doom.cfg`; it is created after
+   DSDA-Doom saves its configuration, so a missing file is not itself an error. Remove `-nojoy` from the shortcut's
+   launch options if present.
+4. Build without `-fno-sys=sdl2`. The default app embeds `libSDL3.dylib`, and package validation confirms that it
+   includes the Apple GameController backend used to enumerate Steam's virtual gamepad.

@@ -90,9 +90,13 @@ pub fn build(b: *std.Build) void {
     // Decided here rather than inside linkDependencies because config.h has to
     // agree with which libsndfile actually gets linked.
     const sys_sndfile = b.systemIntegrationOption("sndfile", .{ .default = false });
-    // The macOS packager needs to know when SDL comes from Homebrew's
-    // sdl2-compat so it can include the SDL3 library loaded at runtime.
-    const sys_sdl = b.systemIntegrationOption("sdl2", .{ .default = false });
+    // Steam's macOS virtual controller is exposed through Apple's
+    // GameController framework. The vendored SDL build does not compile that
+    // backend, while Homebrew's sdl2-compat uses SDL3 and does. Keep vendored
+    // SDL as the default elsewhere and as an explicit -fno-sys=sdl2 opt-out.
+    const sys_sdl = b.systemIntegrationOption("sdl2", .{
+        .default = t.os.tag == .macos,
+    });
 
     // The wad is installed next to the binary because I_FindFileInternal
     // (prboom2/src/SDL/i_system.c) searches I_ExeDir first. This replaces
@@ -468,6 +472,7 @@ fn addMacPackage(
     validate_run.addFileArg(package_output);
     validate_run.addArgs(&.{ "--dev-app", development_app });
     if (app_wad.len != 0) validate_run.addArg("--dev-pwad");
+    if (system_sdl) validate_run.addArg("--expect-sdl3-gamecontroller");
     if (std.mem.eql(u8, package_arch, "uni") or
         std.mem.eql(u8, package_arch, "universal"))
     {

@@ -12,12 +12,15 @@ pub fn main(init: std.process.Init) !void {
     var dev_app: ?[]const u8 = null;
     var expect_universal = false;
     var dev_has_pwad = false;
+    var expect_sdl3_gamecontroller = false;
     var i: usize = 1;
     while (i < args.len) : (i += 1) {
         if (std.mem.eql(u8, args[i], "--universal")) {
             expect_universal = true;
         } else if (std.mem.eql(u8, args[i], "--dev-pwad")) {
             dev_has_pwad = true;
+        } else if (std.mem.eql(u8, args[i], "--expect-sdl3-gamecontroller")) {
+            expect_sdl3_gamecontroller = true;
         } else if (std.mem.eql(u8, args[i], "--package") and i + 1 < args.len) {
             i += 1;
             package = args[i];
@@ -95,6 +98,10 @@ pub fn main(init: std.process.Init) !void {
         app_dir,
     });
 
+    if (expect_sdl3_gamecontroller) {
+        try validateSdl3GameController(arena, io, frameworks_dir);
+    }
+
     var mach_o_files: std.ArrayList([]const u8) = .empty;
     try mach_o_files.append(arena, executable);
     const find_result = try runChecked(arena, io, &.{
@@ -164,6 +171,7 @@ pub fn main(init: std.process.Init) !void {
             validation_dir,
             expect_universal,
             dev_has_pwad,
+            expect_sdl3_gamecontroller,
         );
     }
 }
@@ -175,6 +183,7 @@ fn validateDevelopmentApp(
     validation_dir: []const u8,
     expect_universal: bool,
     has_pwad: bool,
+    expect_sdl3_gamecontroller: bool,
 ) !void {
     const cwd = Io.Dir.cwd();
     const contents_dir = try std.fs.path.join(allocator, &.{ app_dir, "Contents" });
@@ -214,6 +223,10 @@ fn validateDevelopmentApp(
         "--verbose=2",
         app_dir,
     });
+
+    if (expect_sdl3_gamecontroller) {
+        try validateSdl3GameController(allocator, io, frameworks_dir);
+    }
 
     var mach_o_files: std.ArrayList([]const u8) = .empty;
     try mach_o_files.append(allocator, executable);
@@ -258,6 +271,27 @@ fn validateDevelopmentApp(
     _ = try runChecked(allocator, io, &.{ "/usr/bin/env", home_assignment, relocated_executable, "--help" });
 
     std.debug.print("Validated development app {s}\n", .{app_dir});
+}
+
+fn validateSdl3GameController(
+    allocator: std.mem.Allocator,
+    io: Io,
+    frameworks_dir: []const u8,
+) !void {
+    const sdl3 = try std.fs.path.join(allocator, &.{ frameworks_dir, "libSDL3.dylib" });
+    Io.Dir.cwd().access(io, sdl3, .{}) catch |err| {
+        std.debug.print("validate-macos-package: missing {s}: {t}\n", .{ sdl3, err });
+        return error.MissingSdl3;
+    };
+
+    const otool_result = try runChecked(allocator, io, &.{ "/usr/bin/otool", "-L", sdl3 });
+    if (std.mem.indexOf(u8, otool_result.stdout, "GameController.framework") == null) {
+        std.debug.print(
+            "validate-macos-package: SDL3 does not link GameController.framework:\n{s}\n",
+            .{otool_result.stdout},
+        );
+        return error.Sdl3MissingGameController;
+    }
 }
 
 fn runChecked(
