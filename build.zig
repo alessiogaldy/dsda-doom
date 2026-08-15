@@ -352,6 +352,10 @@ pub fn build(b: *std.Build) void {
     const shots = b.addRunArtifact(shots_exe);
     shots.addArg("--bin");
     shots.addArg(b.pathJoin(&.{ b.install_prefix, "bin", project_name }));
+    // Somewhere to keep the throwaway config each run is given, so that the
+    // player's own settings cannot move the hashes.
+    shots.addArg("--workdir");
+    shots.addArg(b.cache_root.join(b.allocator, &.{"shots"}) catch @panic("OOM"));
     shots.step.dependOn(b.getInstallStep());
     shots.has_side_effects = true;
     if (b.args) |args| shots.addArgs(args);
@@ -408,6 +412,11 @@ fn linkDependencies(
         // GLU lives inside the framework on macOS, which is why CMake ends up
         // emitting -framework OpenGL twice.
         mod.linkFramework("OpenGL", .{});
+    } else if (t.os.tag == .windows) {
+        // Same ABI, different names: these are import libraries that come with
+        // the Win32 API rather than anything a package manager installs.
+        mod.linkSystemLibrary("opengl32", .{ .use_pkg_config = .no });
+        mod.linkSystemLibrary("glu32", .{ .use_pkg_config = .no });
     } else {
         mod.linkSystemLibrary("GL", .{ .use_pkg_config = .no });
         mod.linkSystemLibrary("GLU", .{ .use_pkg_config = .no });

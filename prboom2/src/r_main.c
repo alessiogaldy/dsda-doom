@@ -589,7 +589,7 @@ void R_SetupPerspective(float fovy, float aspect, float znear)
   m[14] = -2 * znear;
 }
 
-void R_BuildModelViewMatrix(void)
+static void R_BuildModelViewMatrix(dboolean with_pitch)
 {
   float x, y, z;
   float yaw, pitch;
@@ -599,7 +599,7 @@ void R_BuildModelViewMatrix(void)
   yaw = 270.0f - (float)(viewangle>>ANGLETOFINESHIFT) * 360.0f / FINEANGLES;
   yaw *= (float)M_PI / 180.0f;
   pitch = 0;
-  if (V_IsOpenGLMode())
+  if (with_pitch)
   {
     pitch = (float)(viewpitch>>ANGLETOFINESHIFT) * 360.0f / FINEANGLES;
     pitch *= (float)M_PI / 180.0f;
@@ -769,8 +769,7 @@ void R_ExecuteSetViewSize (void)
   I_SetWindowRect();
   I_SetViewportRect();
 
-  if (V_IsOpenGLMode())
-    dsda_GLSetRenderViewportParams();
+  R_ViewRenderer()->set_viewport_params();
 
   dsda_InitExHud();
   dsda_BeginRenderStats();
@@ -867,32 +866,31 @@ void R_LineCenter(fixed_t *x, fixed_t *y, line_t *line)
 //
 // R_SetupFreelook
 //
+// Software only: these are the column-rasteriser's projection tables. The GL
+// renderer gets the same effect from the view matrix.
 
-void R_SetupFreelook(void)
+static void R_SoftSetupFreelook(void)
 {
-  if (V_IsSoftwareMode())
+  fixed_t InvZtoScale;
+  fixed_t dy;
+  int i;
+
+  centery = viewheight / 2;
+  if (raven || dsda_MouseLook())
   {
-    fixed_t InvZtoScale;
-    fixed_t dy;
-    int i;
+    dy = FixedMul(focallengthy, finetangent[(ANG90-viewpitch)>>ANGLETOFINESHIFT]);
+    centery += dy >> FRACBITS;
+  }
+  centeryfrac = centery<<FRACBITS;
 
-    centery = viewheight / 2;
-    if (raven || dsda_MouseLook())
-    {
-      dy = FixedMul(focallengthy, finetangent[(ANG90-viewpitch)>>ANGLETOFINESHIFT]);
-      centery += dy >> FRACBITS;
-    }
-    centeryfrac = centery<<FRACBITS;
+  InvZtoScale = yaspectmul * centerx;
+  globaluclip = FixedDiv (-centeryfrac, InvZtoScale);
+  globaldclip = FixedDiv ((viewheight<<FRACBITS)-centeryfrac, InvZtoScale);
 
-    InvZtoScale = yaspectmul * centerx;
-    globaluclip = FixedDiv (-centeryfrac, InvZtoScale);
-    globaldclip = FixedDiv ((viewheight<<FRACBITS)-centeryfrac, InvZtoScale);
-
-    for (i=0; i<viewheight; i++)
-    {
-      dy = D_abs(((i-centery)<<FRACBITS)+FRACUNIT/2);
-      yslope[i] = FixedDiv(projectiony, dy);
-    }
+  for (i=0; i<viewheight; i++)
+  {
+    dy = D_abs(((i-centery)<<FRACBITS)+FRACUNIT/2);
+    yslope[i] = FixedDiv(projectiony, dy);
   }
 }
 
@@ -900,7 +898,7 @@ void R_SetupFreelook(void)
 // R_SetupMatrix
 //
 
-void R_SetupMatrix(void)
+static void R_SetupMatrix(dboolean with_pitch)
 {
   float fovy, aspect, znear;
   int r_nearclip = 5;
@@ -912,7 +910,7 @@ void R_SetupMatrix(void)
   znear = (float)r_nearclip / 100.0f;
 
   R_SetupPerspective(fovy, aspect, znear);
-  R_BuildModelViewMatrix();
+  R_BuildModelViewMatrix(with_pitch);
 }
 
 void R_ResetColorMap(void)
@@ -927,8 +925,6 @@ void R_ResetColorMap(void)
 
 static void R_SetupFrame (player_t *player)
 {
-  dboolean HU_CrosshairEnabled(void);
-
   int i, cm;
 
   int FocalTangent = finetangent[FINEANGLES/4 + FieldOfView/2];
@@ -952,7 +948,7 @@ static void R_SetupFrame (player_t *player)
   viewtansin = FixedMul(FocalTangent, viewsin);
   viewtancos = FixedMul(FocalTangent, viewcos);
 
-  R_SetupFreelook();
+  R_ViewRenderer()->setup_freelook();
 
   // killough 3/20/98, 4/4/98: select colormap based on player status
 
@@ -1002,49 +998,48 @@ static void R_SetupFrame (player_t *player)
 
   R_SetClipPlanes();
 
-  if (V_IsOpenGLMode() || HU_CrosshairEnabled())
-    R_SetupMatrix();
+  R_ViewRenderer()->setup_view_matrix();
 
   validcount++;
 }
 
-static void R_InitDrawScene(void)
+static void R_GLInitScene(void)
+{
+  // proff 11/99: clear buffers
+  gld_InitDrawScene();
+
+  if (!automap_on)
+  {
+    // proff 11/99: switch to perspective mode
+    //
+    // CPU half only. The context half is gld_BeginFrameGL, which the draw
+    // phase runs; nothing between here and there needs the GL state it sets.
+    gld_StartFrame();
+  }
+}
+
+static void R_SoftInitScene(void)
 {
   // Framerate-independent fuzz progression
   static int fuzzgametic = 0;
   static int savedfuzzpos = 0;
 
-  if (V_IsOpenGLMode())
+  if (dsda_IntConfig(dsda_config_flashing_hom))
+  { // killough 2/10/98: add flashing red HOM indicators
+    unsigned char color=(gametic % 20) < 9 ? 0xb0 : 0;
+    V_FillRect(0, 0, 0, viewwidth, viewheight, color);
+    R_DrawViewBorder();
+  }
+
+  // Only progress software fuzz offset if the gametic has progressed
+  if (fuzzgametic != gametic)
   {
-    // proff 11/99: clear buffers
-    gld_InitDrawScene();
-
-    if (!automap_on)
-    {
-      // proff 11/99: switch to perspective mode
-      //
-      // CPU half only. The context half is gld_BeginFrameGL, which the draw
-      // phase runs; nothing between here and there needs the GL state it sets.
-      gld_StartFrame();
-    }
-  } else {
-    if (dsda_IntConfig(dsda_config_flashing_hom))
-    { // killough 2/10/98: add flashing red HOM indicators
-      unsigned char color=(gametic % 20) < 9 ? 0xb0 : 0;
-      V_FillRect(0, 0, 0, viewwidth, viewheight, color);
-      R_DrawViewBorder();
-    }
-
-    // Only progress software fuzz offset if the gametic has progressed
-    if (fuzzgametic != gametic)
-    {
-      fuzzgametic = gametic;
-      savedfuzzpos = R_GetFuzzPos();
-    }
-    else
-    {
-      R_SetFuzzPos(savedfuzzpos);
-    }
+    fuzzgametic = gametic;
+    savedfuzzpos = R_GetFuzzPos();
+  }
+  else
+  {
+    R_SetFuzzPos(savedfuzzpos);
   }
 }
 
@@ -1063,10 +1058,6 @@ static void R_RenderBSPNodes(void)
     R_RenderBSPNode(numnodes - 1);
   }
 
-  if (map_format.zdoom && V_IsOpenGLMode())
-  {
-    R_ForceRenderPolyObjs();
-  }
 }
 
 //
@@ -1081,6 +1072,199 @@ static void R_RenderBSPNodes(void)
 // Everything in between still runs on the main thread, which is why the two are
 // separate calls rather than one function with a mode flag: D_Display has work
 // to schedule between them.
+//
+// The two renderers implement that split as a view_renderer_t rather than as
+// mode tests scattered down the frame path. What differs between them is only
+// the order and placement of whole phases, so the seam can sit this high; the
+// BSP walk itself is shared, and still tests the mode internally to decide what
+// to emit.
+
+static void R_GLBuildView(player_t *player)
+{
+  DSDA_ADD_CONTEXT(sf_gl_frustum);
+  gld_FrustumSetup();
+  DSDA_REMOVE_CONTEXT(sf_gl_frustum);
+
+  DSDA_ADD_CONTEXT(sf_bsp_nodes);
+  R_RenderBSPNodes();
+  if (map_format.zdoom)
+    R_ForceRenderPolyObjs();
+  DSDA_REMOVE_CONTEXT(sf_bsp_nodes);
+
+  // The BSP walk is the only thing that adds to the draw list, so the scene is
+  // complete here. Hand it to the draw phase, which from this point reads
+  // gld_drawinfo_ready and no longer shares a buffer with scene building.
+  gld_PublishDrawInfo();
+
+  FakeNetUpdate();
+
+  DSDA_ADD_CONTEXT(sf_reset_column_buffer);
+  R_ResetColumnBuffer();
+  DSDA_REMOVE_CONTEXT(sf_reset_column_buffer);
+
+  // Two in a row, and deliberately so: this half used to share one straight
+  // line of code with the software renderer, and these are the update points
+  // that fell either side of phases only that renderer runs. They are kept
+  // because they pump input and the network, so dropping them would change
+  // how often a long frame yields.
+  FakeNetUpdate();
+  FakeNetUpdate();
+}
+
+static void R_GLDrawView(player_t *player)
+{
+  if (automap_on)
+    return;
+
+  DSDA_ADD_CONTEXT(sf_draw_scene);
+  // The context half of the frame setup R_InitDrawScene started. It has to
+  // land here rather than there: it clears the colour buffer, and the view
+  // border is drawn between the two.
+  gld_BeginFrameGL();
+  gld_DrawScene(player);
+  gld_EndDrawScene();
+  DSDA_REMOVE_CONTEXT(sf_draw_scene);
+}
+
+static void R_SoftBuildView(player_t *player)
+{
+  DSDA_ADD_CONTEXT(sf_bsp_nodes);
+  R_RenderBSPNodes();
+  DSDA_REMOVE_CONTEXT(sf_bsp_nodes);
+
+  FakeNetUpdate();
+
+  DSDA_ADD_CONTEXT(sf_draw_planes);
+  R_DrawPlanes();
+  DSDA_REMOVE_CONTEXT(sf_draw_planes);
+
+  DSDA_ADD_CONTEXT(sf_reset_column_buffer);
+  R_ResetColumnBuffer();
+  DSDA_REMOVE_CONTEXT(sf_reset_column_buffer);
+
+  FakeNetUpdate();
+
+  DSDA_ADD_CONTEXT(sf_draw_masked);
+  R_DrawMasked ();
+  R_ResetColumnBuffer();
+  DSDA_REMOVE_CONTEXT(sf_draw_masked);
+
+  FakeNetUpdate();
+}
+
+// Nothing to do: the software renderer has already rasterised the view into
+// the screen buffer during its build half.
+static void R_SoftDrawView(player_t *player)
+{
+}
+
+static void R_GLPreprocessLevel(void)
+{
+  // Borrows the context back off the render thread, so it stays on the main
+  // thread.
+  gld_PreprocessLevel();
+}
+
+static void R_GLBeginWipeFrame(void)
+{
+  dsda_GLLetterboxClear();
+  dsda_GLStartMeltRenderTexture();
+}
+
+static void R_GLEndWipeFrame(void)
+{
+  dsda_GLEndMeltRenderTexture();
+}
+
+// The software renderer draws the wipe straight into the screen buffer and has
+// no per-level or viewport state of its own, so these are all empty.
+static void R_SoftNoop(void)
+{
+}
+
+// GL draws through the matrix every frame, and carries the view pitch in it.
+static void R_GLSetupViewMatrix(void)
+{
+  R_SetupMatrix(true);
+}
+
+// The software renderer projects with its own tables and only needs a matrix
+// when something else asks for one, such as the crosshair. Pitch is already in
+// those tables, so it must not be applied twice.
+static void R_SoftSetupViewMatrix(void)
+{
+  dboolean HU_CrosshairEnabled(void);
+
+  if (HU_CrosshairEnabled())
+    R_SetupMatrix(false);
+}
+
+static void R_GLPlanFrame(frame_plan_t *plan)
+{
+  // GL owns the whole framebuffer, so anything outside the scene is stale.
+  plan->letterbox_clear = plan->can_letterbox;
+
+  // The frame is cleared, so the border always has to go back down.
+  plan->draw_border = true;
+
+  // The view is drawn later, so the border cannot wait until after it.
+  plan->border_after_view = false;
+
+  // The scene is drawn later and possibly on another thread, so the UI is
+  // recorded here and replayed over it. The automap is excluded because it
+  // issues GL directly rather than through the V_ table.
+  plan->record_ui = plan->in_level && !plan->automap;
+}
+
+static void R_SoftPlanFrame(frame_plan_t *plan)
+{
+  // The renderer only ever touches the view area, so whatever surrounds it is
+  // still valid.
+  plan->letterbox_clear = false;
+
+  // Nothing overwrote the border, so redraw it only when it went stale.
+  plan->draw_border = plan->border_invalidated;
+
+  // The view is already rasterised, so the border can go over the top of it.
+  plan->border_after_view = true;
+
+  // The UI is drawn directly; there is no deferred scene to draw it over.
+  plan->record_ui = false;
+}
+
+static const view_renderer_t gl_view_renderer = {
+  .build_view          = R_GLBuildView,
+  .draw_view           = R_GLDrawView,
+  .init_scene          = R_GLInitScene,
+  .setup_freelook      = R_SoftNoop,
+  .preprocess_level    = R_GLPreprocessLevel,
+  .set_viewport_params = dsda_GLSetRenderViewportParams,
+  .begin_wipe_frame    = R_GLBeginWipeFrame,
+  .end_wipe_frame      = R_GLEndWipeFrame,
+  .setup_view_matrix   = R_GLSetupViewMatrix,
+  .plan_frame          = R_GLPlanFrame,
+};
+
+static const view_renderer_t soft_view_renderer = {
+  .build_view          = R_SoftBuildView,
+  .draw_view           = R_SoftDrawView,
+  .init_scene          = R_SoftInitScene,
+  .setup_freelook      = R_SoftSetupFreelook,
+  .preprocess_level    = R_SoftNoop,
+  .set_viewport_params = R_SoftNoop,
+  .begin_wipe_frame    = R_SoftNoop,
+  .end_wipe_frame      = R_SoftNoop,
+  .setup_view_matrix   = R_SoftSetupViewMatrix,
+  .plan_frame          = R_SoftPlanFrame,
+};
+
+// Resolved per call rather than latched at startup, because the video mode can
+// change at runtime. This is the one place the frame path asks which renderer
+// is in use.
+const view_renderer_t *R_ViewRenderer(void)
+{
+  return V_IsOpenGLMode() ? &gl_view_renderer : &soft_view_renderer;
+}
 
 void R_BuildPlayerView (player_t* player)
 {
@@ -1098,62 +1282,15 @@ void R_BuildPlayerView (player_t* player)
   DSDA_REMOVE_CONTEXT(sf_clear);
 
   DSDA_ADD_CONTEXT(sf_init_scene);
-  R_InitDrawScene();
+  R_ViewRenderer()->init_scene();
   DSDA_REMOVE_CONTEXT(sf_init_scene);
 
   FakeNetUpdate();
 
-  if (V_IsOpenGLMode()) {
-    DSDA_ADD_CONTEXT(sf_gl_frustum);
-    gld_FrustumSetup();
-    DSDA_REMOVE_CONTEXT(sf_gl_frustum);
-  }
-
-  DSDA_ADD_CONTEXT(sf_bsp_nodes);
-  R_RenderBSPNodes();
-  DSDA_REMOVE_CONTEXT(sf_bsp_nodes);
-
-  // The BSP walk is the only thing that adds to the draw list, so the scene is
-  // complete here. Hand it to the draw phase, which from this point reads
-  // gld_drawinfo_ready and no longer shares a buffer with scene building.
-  if (V_IsOpenGLMode())
-    gld_PublishDrawInfo();
-
-  FakeNetUpdate();
-
-  if (V_IsSoftwareMode())
-  {
-    DSDA_ADD_CONTEXT(sf_draw_planes);
-    R_DrawPlanes();
-    DSDA_REMOVE_CONTEXT(sf_draw_planes);
-  }
-
-  DSDA_ADD_CONTEXT(sf_reset_column_buffer);
-  R_ResetColumnBuffer();
-  DSDA_REMOVE_CONTEXT(sf_reset_column_buffer);
-
-  FakeNetUpdate();
-
-  if (V_IsSoftwareMode()) {
-    DSDA_ADD_CONTEXT(sf_draw_masked);
-    R_DrawMasked ();
-    R_ResetColumnBuffer();
-    DSDA_REMOVE_CONTEXT(sf_draw_masked);
-  }
-
-  FakeNetUpdate();
+  R_ViewRenderer()->build_view(player);
 }
 
 void R_DrawPlayerView (player_t* player)
 {
-  if (V_IsOpenGLMode() && !automap_on) {
-    DSDA_ADD_CONTEXT(sf_draw_scene);
-    // The context half of the frame setup R_InitDrawScene started. It has to
-    // land here rather than there: it clears the colour buffer, and the view
-    // border is drawn between the two.
-    gld_BeginFrameGL();
-    gld_DrawScene(player);
-    gld_EndDrawScene();
-    DSDA_REMOVE_CONTEXT(sf_draw_scene);
-  }
+  R_ViewRenderer()->draw_view(player);
 }

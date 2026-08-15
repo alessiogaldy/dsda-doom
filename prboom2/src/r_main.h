@@ -148,6 +148,78 @@ angle_t R_PointToPseudoAngle(fixed_t x, fixed_t y);
 //
 
 void R_ResetColorMap(void);
+// How a frame is composed around the view. The frame path fills in what it
+// knows and the renderer answers with how it wants the frame put together.
+//
+// This is one call rather than a set of flags on the interface deliberately. A
+// flag left out of an initialiser is silently false, which is a behaviour
+// change no compiler and possibly no test will catch; a method left out is a
+// null pointer, which fails on the first frame. It also keeps each decision
+// next to the reasoning for it, instead of splitting the policy between the
+// renderer and the caller that combines it with global state.
+//
+// It is also a call of its own rather than an argument to build_view, which
+// would be the obvious way to save a method. It cannot be: build_view and
+// draw_view only run inside a level, while letterbox_clear is read on every
+// frame, including menus, the intermission and the finale, where no view is
+// built or drawn at all. This is the only part of the interface that every
+// frame needs.
+typedef struct {
+  // What the frame path knows.
+  dboolean in_level;
+  dboolean automap;
+  dboolean border_invalidated;  // something has made the view border stale
+  dboolean can_letterbox;       // the window has area outside the scene to clear
+
+  // What the renderer decides.
+  dboolean letterbox_clear;
+  dboolean draw_border;
+  dboolean border_after_view;
+  dboolean record_ui;
+} frame_plan_t;
+
+// How a renderer draws the 3D view, in the two halves the frame is split into.
+// build_view runs on the main thread and may not issue any GL; draw_view runs
+// wherever the GL context lives, which may be the render thread.
+//
+// The split is what the two renderers disagree about. OpenGL walks the BSP into
+// a draw list in the build half and turns that list into draw calls in the draw
+// half. The software renderer rasterises straight into the screen buffer as it
+// walks, so all of its work is in the build half and its draw half is empty.
+typedef struct {
+  void (*build_view)(player_t *player);
+  void (*draw_view)(player_t *player);
+
+  // Start-of-frame setup, before the BSP walk.
+  void (*init_scene)(void);
+
+  // Recomputes anything derived from the view pitch. The software renderer
+  // rebuilds its projection tables; GL carries pitch in the view matrix and so
+  // has nothing to do.
+  void (*setup_freelook)(void);
+
+  // Per-level setup. The GL renderer builds vertex buffers and texture state
+  // for the map; the software renderer has nothing to prepare.
+  void (*preprocess_level)(void);
+
+  // Called when the view size changes, to update anything derived from it.
+  void (*set_viewport_params)(void);
+
+  // Wrapped around each frame of a screen wipe. GL renders the melt through an
+  // offscreen texture so it runs at scene resolution rather than window
+  // resolution.
+  void (*begin_wipe_frame)(void);
+  void (*end_wipe_frame)(void);
+
+  // Builds the view matrix, if this renderer needs one.
+  void (*setup_view_matrix)(void);
+
+  // Decides how the frame is composed around the view. See frame_plan_t.
+  void (*plan_frame)(frame_plan_t *plan);
+} view_renderer_t;
+
+const view_renderer_t *R_ViewRenderer(void);
+
 // The two halves of the frame. R_BuildPlayerView issues no GL and stays on the
 // main thread; R_DrawPlayerView is GL only and runs wherever the context lives.
 void R_BuildPlayerView(player_t *player);

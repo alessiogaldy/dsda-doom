@@ -15,6 +15,7 @@
 //	DSDA Console
 //
 
+#include "am_map.h"
 #include "d_deh.h"
 #include "doomstat.h"
 #include "g_game.h"
@@ -167,6 +168,18 @@ dboolean dsda_OpenConsole(void) {
   M_StartControlPanel();
   M_SetupNextMenu(&dsda_ConsoleDef);
   dsda_ResetConsoleEntry();
+
+  return true;
+}
+
+static dboolean console_Automap(const char* command, const char* args) {
+  // The same pair of calls the map key makes in AM_Responder, so that a script
+  // -- or the render check, which has no way to press a key -- reaches the
+  // automap through the path a player does.
+  if (automap_active)
+    AM_Stop(true);
+  else
+    AM_Start(true);
 
   return true;
 }
@@ -2283,6 +2296,9 @@ static console_command_entry_t console_commands[] = {
   { "player.kill", console_PlayerKill, CF_NEVER },
 
   { "music.restart", console_MusicRestart, CF_ALWAYS },
+
+  // Allowed in a demo and in strict mode because the map key already is.
+  { "automap", console_Automap, CF_ALWAYS },
 
   { "level.exit", console_LevelExit, CF_NEVER },
   { "level.secret_exit", console_LevelSecretExit, CF_NEVER },
