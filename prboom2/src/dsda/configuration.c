@@ -683,7 +683,7 @@ dsda_config_t dsda_config[dsda_config_count] = {
   },
   [dsda_config_use_game_controller] = {
     "use_game_controller", dsda_config_use_game_controller,
-    dsda_config_int, 0, 2, { 0 }, NULL, NOT_STRICT, dsda_InitGameController
+    dsda_config_int, 0, 2, { 1 }, NULL, NOT_STRICT, dsda_InitGameController
   },
   [dsda_config_deh_apply_cheats] = {
     "deh_apply_cheats", dsda_config_deh_apply_cheats,

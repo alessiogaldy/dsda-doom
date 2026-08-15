@@ -486,6 +486,9 @@ char* I_FindFileInternal(const char* wfname, const char* ext, dboolean isStatic)
     {DOOMWADDIR}, // build-time configured DOOMWADDIR
     {DSDA_ABSOLUTE_PWAD_PATH}, // build-time configured absolute path to dsda-doom.wad
     {NULL, NULL, NULL, I_GetBasePath}, // search the base path provided by SDL
+#ifdef __APPLE__
+    {NULL, "../Resources", NULL, I_GetBasePath}, // macOS application bundle resources
+#endif
     {NULL, "../share/games/doom", NULL, I_GetBasePath}, // AppImage
     {NULL, "doom", "HOME"}, // ~/doom
     {NULL, NULL, "HOME"}, // ~

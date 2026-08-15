@@ -90,6 +90,9 @@ pub fn build(b: *std.Build) void {
     // Decided here rather than inside linkDependencies because config.h has to
     // agree with which libsndfile actually gets linked.
     const sys_sndfile = b.systemIntegrationOption("sndfile", .{ .default = false });
+    // The macOS packager needs to know when SDL comes from Homebrew's
+    // sdl2-compat so it can include the SDL3 library loaded at runtime.
+    const sys_sdl = b.systemIntegrationOption("sdl2", .{ .default = false });
 
     // The wad is installed next to the binary because I_FindFileInternal
     // (prboom2/src/SDL/i_system.c) searches I_ExeDir first. This replaces
@@ -211,6 +214,7 @@ pub fn build(b: *std.Build) void {
         .vorbisfile = with_vorbisfile,
         .portmidi = with_portmidi,
         .sys_sndfile = sys_sndfile,
+        .sys_sdl = sys_sdl,
     });
 
     const exe = b.addExecutable(.{ .name = project_name, .root_module = mod });
@@ -239,6 +243,10 @@ pub fn build(b: *std.Build) void {
 
     const wad = buildWad(b);
     b.getInstallStep().dependOn(&b.addInstallBinFile(wad, wad_name).step);
+
+    if (t.os.tag.isDarwin() and b.graph.host.result.os.tag.isDarwin()) {
+        addMacPackage(b, exe.getEmittedBin(), wad, t.cpu.arch, sys_sdl);
+    }
 
     // Lets `zig build verify-config` diff against build/build-config/config.h.
     const install_config = b.addInstallFile(config_h.getOutputFile(), "config.h");
@@ -358,6 +366,93 @@ pub fn build(b: *std.Build) void {
     b.step("shots", "Check rendered frames against recorded fingerprints").dependOn(&shots.step);
 }
 
+fn addMacPackage(
+    b: *std.Build,
+    built_executable: std.Build.LazyPath,
+    built_wad: std.Build.LazyPath,
+    target_arch: std.Target.Cpu.Arch,
+    system_sdl: bool,
+) void {
+    const executable = if (b.option(
+        []const u8,
+        "package-executable",
+        "Use an existing macOS executable (for a lipo-created universal build)",
+    )) |path| packageInputPath(b, path) else built_executable;
+    const wad = if (b.option(
+        []const u8,
+        "package-wad",
+        "Use an existing dsda-doom.wad when packaging",
+    )) |path| packageInputPath(b, path) else built_wad;
+    const package_arch = b.option(
+        []const u8,
+        "package-arch",
+        "Architecture label for the macOS package (arm64, x86_64, or uni)",
+    ) orelse switch (target_arch) {
+        .aarch64 => "arm64",
+        .x86_64 => "x86_64",
+        else => @tagName(target_arch),
+    };
+    const package_name = b.fmt("{s}-{s}-mac-{s}.zip", .{
+        project_name,
+        version,
+        package_arch,
+    });
+
+    const package_tool = b.addExecutable(.{
+        .name = "package_macos",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("zig/tools/package_macos.zig"),
+            .target = b.graph.host,
+            .optimize = .ReleaseSafe,
+        }),
+    });
+    const package_run = b.addRunArtifact(package_tool);
+    package_run.addArg("--executable");
+    package_run.addFileArg(executable);
+    package_run.addArg("--wad");
+    package_run.addFileArg(wad);
+    package_run.addArg("--icon");
+    package_run.addFileArg(b.path("prboom2/ICONS/dsda-doom.icns"));
+    package_run.addArg("--license");
+    package_run.addFileArg(b.path("prboom2/COPYING"));
+    package_run.addArg("--plist-template");
+    package_run.addFileArg(b.path("zig/macos/Info.plist.in"));
+    package_run.addArgs(&.{ "--version", version, "--output" });
+    const package_output = package_run.addOutputFileArg(package_name);
+    if (system_sdl) package_run.addArg("--system-sdl");
+
+    const validate_tool = b.addExecutable(.{
+        .name = "validate_macos_package",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("zig/tools/validate_macos_package.zig"),
+            .target = b.graph.host,
+            .optimize = .ReleaseSafe,
+        }),
+    });
+    const validate_run = b.addRunArtifact(validate_tool);
+    validate_run.addArg("--package");
+    validate_run.addFileArg(package_output);
+    if (std.mem.eql(u8, package_arch, "uni") or
+        std.mem.eql(u8, package_arch, "universal"))
+    {
+        validate_run.addArg("--universal");
+    }
+    validate_run.has_side_effects = true;
+
+    const install_package = b.addInstallFile(package_output, package_name);
+    const package_step = b.step(
+        "package-macos",
+        "Build, sign, validate, and archive DSDA-Doom.app",
+    );
+    package_step.dependOn(&install_package.step);
+    package_step.dependOn(&validate_run.step);
+}
+
+fn packageInputPath(b: *std.Build, path: []const u8) std.Build.LazyPath {
+    if (std.fs.path.isAbsolute(path)) return .{ .cwd_relative = b.dupe(path) };
+    return b.path(path);
+}
+
 /// Artifacts built from source, exposed so `zig build check-deps` can smoke-test
 /// them. Null means the library came from the system instead.
 const Vendored = struct {
@@ -382,6 +477,7 @@ const Features = struct {
     vorbisfile: bool,
     portmidi: bool,
     sys_sndfile: bool,
+    sys_sdl: bool,
 };
 
 /// Each library is either built from source by the Zig package manager or
@@ -509,8 +605,7 @@ fn linkDependencies(
     // SDL2 at link time, so mixing a vendored SDL2 with a system SDL2_mixer
     // (or vice versa) puts two SDL2 copies with independent global state in
     // one process: separate event queues, separate audio subsystems.
-    const sys_sdl = b.systemIntegrationOption("sdl2", .{ .default = false });
-    if (sys_sdl) {
+    if (features.sys_sdl) {
         packages.append(b.allocator, "sdl2") catch @panic("OOM");
         packages.append(b.allocator, "SDL2_mixer") catch @panic("OOM");
         if (features.image) packages.append(b.allocator, "SDL2_image") catch @panic("OOM");

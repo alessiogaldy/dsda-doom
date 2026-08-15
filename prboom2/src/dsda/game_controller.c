@@ -28,6 +28,7 @@
 
 static int use_game_controller;
 static SDL_GameController* game_controller;
+static SDL_JoystickID game_controller_instance = -1;
 
 typedef struct {
   SDL_GameControllerAxis axis;
@@ -190,10 +191,70 @@ void dsda_InitGameControllerParameters(void) {
   swap_analogs = dsda_IntConfig(dsda_config_swap_analogs);
 }
 
-void dsda_InitGameController(void) {
-  int num_joysticks;
+static void dsda_ReleaseGameControllerButtons(void) {
+  event_t ev;
 
+  ev.type = ev_joystick;
+  ev.data1.i = 0;
+  D_PostEvent(&ev);
+}
+
+static void dsda_CloseGameController(void) {
+  if (!game_controller)
+    return;
+
+  dsda_ReleaseGameControllerButtons();
+  SDL_GameControllerClose(game_controller);
   game_controller = NULL;
+  game_controller_instance = -1;
+}
+
+static int dsda_OpenGameController(int device_index) {
+  SDL_Joystick* joystick;
+
+  if (!SDL_IsGameController(device_index))
+    return false;
+
+  game_controller = SDL_GameControllerOpen(device_index);
+
+  if (!game_controller) {
+    lprintf(LO_ERROR, "dsda_OpenGameController: error opening device %d: %s\n",
+            device_index, SDL_GetError());
+    return false;
+  }
+
+  joystick = SDL_GameControllerGetJoystick(game_controller);
+  if (joystick)
+    game_controller_instance = SDL_JoystickInstanceID(joystick);
+
+  if (game_controller_instance < 0) {
+    lprintf(LO_ERROR, "dsda_OpenGameController: error identifying device %d: %s\n",
+            device_index, SDL_GetError());
+    SDL_GameControllerClose(game_controller);
+    game_controller = NULL;
+    game_controller_instance = -1;
+    return false;
+  }
+
+  lprintf(LO_DEBUG, "Opened game controller %s\n",
+          SDL_GameControllerName(game_controller));
+
+  return true;
+}
+
+static int dsda_OpenFirstGameController(void) {
+  int device_index;
+
+  for (device_index = 0; device_index < SDL_NumJoysticks(); ++device_index)
+    if (dsda_OpenGameController(device_index))
+      return true;
+
+  return false;
+}
+
+void dsda_InitGameController(void) {
+  dsda_CloseGameController();
+
   use_game_controller =
     dsda_IntConfig(dsda_config_use_game_controller) && !dsda_Flag(dsda_arg_nojoy);
 
@@ -201,29 +262,29 @@ void dsda_InitGameController(void) {
     return;
 
   dsda_InitGameControllerParameters();
-  SDL_InitSubSystem(SDL_INIT_GAMECONTROLLER);
-
-  num_joysticks = SDL_NumJoysticks();
-
-  if (use_game_controller > num_joysticks) {
-    lprintf(LO_WARN, "dsda_InitGameController: invalid joystick %d\n",
-            use_game_controller);
+  if (SDL_InitSubSystem(SDL_INIT_GAMECONTROLLER) < 0) {
+    lprintf(LO_ERROR, "dsda_InitGameController: SDL initialization failed: %s\n",
+            SDL_GetError());
     return;
   }
 
-  if (!SDL_IsGameController(use_game_controller - 1)) {
-    lprintf(LO_WARN, "dsda_InitGameController: unsupported joystick %d\n",
-            use_game_controller);
+  if (!dsda_OpenFirstGameController())
+    lprintf(LO_WARN, "dsda_InitGameController: no supported game controller found\n");
+}
+
+void dsda_GameControllerAdded(int device_index) {
+  if (!use_game_controller || game_controller)
     return;
-  }
 
-  game_controller = SDL_GameControllerOpen(use_game_controller - 1);
+  dsda_OpenGameController(device_index);
+}
 
-  if (!game_controller) {
-    lprintf(LO_ERROR, "dsda_InitGameController: error opening game controller %d\n",
-            use_game_controller);
+void dsda_GameControllerRemoved(int instance_id) {
+  if (!game_controller || game_controller_instance != instance_id)
     return;
-  }
 
-  lprintf(LO_DEBUG, "Opened game controller %s\n", SDL_GameControllerName(game_controller));
+  dsda_CloseGameController();
+
+  if (use_game_controller)
+    dsda_OpenFirstGameController();
 }
