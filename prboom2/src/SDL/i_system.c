@@ -82,6 +82,7 @@
 
 #include "z_zone.h"
 
+#include "dsda/args.h"
 #include "dsda/settings.h"
 #include "dsda/signal_context.h"
 #include "dsda/time.h"
@@ -451,6 +452,36 @@ static const char *I_GetBasePath(void)
   return executable_dir;
 }
 
+void I_ConfigureBundleGameWads(void)
+{
+#ifdef __APPLE__
+  const char *base_path = I_GetBasePath();
+  char *wads_dir;
+  char *iwad;
+  char *pwad;
+
+  if (!base_path)
+    return;
+
+  wads_dir = dsda_ConcatDir(base_path, "WADs");
+  iwad = dsda_ConcatDir(wads_dir, "iwad.wad");
+  pwad = dsda_ConcatDir(wads_dir, "selected.wad");
+
+  if (M_ReadAccess(iwad))
+  {
+    if (!dsda_Arg(dsda_arg_iwad)->found)
+      dsda_UpdateStringArg(dsda_arg_iwad, iwad);
+
+    if (M_ReadAccess(pwad) && !dsda_Arg(dsda_arg_file)->found)
+      dsda_AppendStringArg(dsda_arg_file, pwad);
+  }
+
+  Z_Free(pwad);
+  Z_Free(iwad);
+  Z_Free(wads_dir);
+#endif
+}
+
 /*
  * I_FindFile
  *
@@ -478,6 +509,11 @@ char* I_FindFileInternal(const char* wfname, const char* ext, dboolean isStatic)
     const char *(*func)(void); // for functions that return the directory
   } search0[] = {
     {NULL, NULL, NULL, I_ExeDir}, // executable directory
+#ifdef __APPLE__
+    // Prefer an application bundle's resource directory over build-time
+    // install paths, which may still exist on the machine that built the app.
+    {NULL, "../Resources", NULL, I_GetBasePath},
+#endif
 #if !defined(_WIN32) && !defined(AMIGA)
     {NULL, NULL, NULL, I_ConfigDir}, // config and autoload directory. on windows/amiga, this is the same as I_ExeDir
 #endif

@@ -267,6 +267,7 @@ void I_SetProcessPriority(void)
 int main(int argc, char **argv)
 {
   dsda_ParseCommandLineArgs(argc, argv);
+  I_ConfigureBundleGameWads();
 
   if (dsda_Flag(dsda_arg_verbose))
     I_EnableVerboseLogging();

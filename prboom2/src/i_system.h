@@ -78,6 +78,7 @@ const char* I_GetTempDir(void);
 
 const char *I_ExeDir(void); // killough 2/16/98: path to executable's dir
 const char *I_ConfigDir(void); // path to config and autoload dir
+void I_ConfigureBundleGameWads(void);
 
 dboolean HasTrailingSlash(const char* dn);
 char* I_RequireFile(const char* wfname, const char* ext);
