@@ -126,8 +126,9 @@ DSDA-Doom leaves SDL's controller-driver selection at its macOS default. In part
 optional Steam Controller HIDAPI driver: doing so can prevent SDL from falling back to Apple's GameController
 backend. `SDL_JOYSTICK_HIDAPI` and `SDL_JOYSTICK_HIDAPI_STEAM` remain available as explicit diagnostic overrides.
 
-This direct path does not require an AppID, Steamworks SDK, macOS Input Monitoring permission, or an Accessibility
-permission. SDL also exposes the controller's motion sensors, but native gyro aiming, controller-specific glyphs,
+This direct path does not require an AppID, Steamworks SDK, or Accessibility permission. macOS may require Input
+Monitoring permission to open the controller's composite HID interface, which also exposes keyboard and mouse
+collections. SDL also exposes the controller's motion sensors, but native gyro aiming, controller-specific glyphs,
 Grip Sense, and HD haptics are not implemented yet.
 
 If Steam detects the controller but DSDA-Doom receives no input:
@@ -135,13 +136,18 @@ If Steam detects the controller but DSDA-Doom receives no input:
 1. Confirm that the shortcut is set to **Disable Steam Input**, then quit and relaunch the game. With Steam Input
    enabled, Steam may add the physical controller to `SDL_GAMECONTROLLER_IGNORE_DEVICES` without providing a usable
    virtual replacement to a macOS non-Steam shortcut.
-2. Confirm **Enable Controller** is on in DSDA-Doom, or set `use_game_controller 1` in the existing configuration.
+2. Inspect `controller-status.txt`. If both `raw_hid.open_shared_error` and
+   `raw_hid.open_exclusive_error` report `0xE00002E2` or `not permitted`, add the exact `DSDA-Doom.app` being run to
+   **System Settings > Privacy & Security > Input Monitoring**, enable it, and relaunch the application. If a
+   development build is already listed, remove and re-add it: ad hoc signing gives each rebuilt application a new
+   code identity, so an older permission may no longer apply.
+3. Confirm **Enable Controller** is on in DSDA-Doom, or set `use_game_controller 1` in the existing configuration.
    On macOS the configuration is at `~/Library/Application Support/dsda-doom/dsda-doom.cfg`; it is created after
    DSDA-Doom saves its configuration, so a missing file is not itself an error. Remove `-nojoy` from the shortcut's
    launch options if present.
-3. Build without `-fno-sys=sdl2` and update the Homebrew libraries with `brew upgrade sdl3 sdl2-compat`. The default
+4. Build without `-fno-sys=sdl2` and update the Homebrew libraries with `brew upgrade sdl3 sdl2-compat`. The default
    app embeds `libSDL3.dylib`; SDL 3.4.14 or newer is required for the 2026 controller's native touchpads.
-4. Inspect `controller-status.txt`. A working native connection reports `steam_controller.native: yes`,
+5. Inspect `controller-status.txt`. A working native connection reports `steam_controller.native: yes`,
    `active.touchpad.count: 2`, and `steam_controller.right_trackpad.available: yes`. Touch and release the right pad
    before sharing the file so it also contains the latest touch coordinates and motion-event count. If
    `joystick.count` is zero, the `raw_hid` section shows whether SDL can enumerate the physical Valve hardware and
