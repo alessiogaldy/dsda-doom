@@ -608,20 +608,6 @@ void dsda_InitGameController(void) {
   }
 
 #ifdef __APPLE__
-  // SDL's direct HIDAPI driver for Steam Controllers is optional. Enable it
-  // before joystick initialization so the physical 2026 controller remains
-  // usable when the Apple GameController backend is unavailable or Steam is
-  // also running. Preserve explicit user overrides for diagnostics.
-  if (!SDL_GetHint(SDL_HINT_JOYSTICK_HIDAPI) &&
-      SDL_SetHint(SDL_HINT_JOYSTICK_HIDAPI, "1") != SDL_TRUE)
-    lprintf(LO_WARN, "Could not enable SDL HIDAPI controller detection: %s\n",
-            SDL_GetError());
-
-  if (!SDL_GetHint(SDL_HINT_JOYSTICK_HIDAPI_STEAM) &&
-      SDL_SetHint(SDL_HINT_JOYSTICK_HIDAPI_STEAM, "1") != SDL_TRUE)
-    lprintf(LO_WARN, "Could not enable the SDL Steam Controller HIDAPI driver: %s\n",
-            SDL_GetError());
-
   // SDL filters Steam's virtual Xbox gamepad by default. Steam normally
   // opts games into it through this environment variable, but macOS
   // non-Steam shortcuts do not consistently receive it. Set the missing

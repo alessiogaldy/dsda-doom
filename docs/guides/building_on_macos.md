@@ -122,8 +122,9 @@ DSDA-Doom. The right touchpad controls aim by default. Configure it under **Opti
 **Steam Trackpad Aim** and the horizontal and vertical trackpad sensitivity values. Vertical trackpad motion controls
 free look when **Enable Free Look** is on; otherwise vertical motion is ignored.
 
-DSDA-Doom enables SDL's optional Steam Controller HIDAPI driver before controller initialization. An explicit
-`SDL_JOYSTICK_HIDAPI=0` or `SDL_JOYSTICK_HIDAPI_STEAM=0` environment override still disables it.
+DSDA-Doom leaves SDL's controller-driver selection at its macOS default. In particular, it does not force the
+optional Steam Controller HIDAPI driver: doing so can prevent SDL from falling back to Apple's GameController
+backend. `SDL_JOYSTICK_HIDAPI` and `SDL_JOYSTICK_HIDAPI_STEAM` remain available as explicit diagnostic overrides.
 
 This direct path does not require an AppID, Steamworks SDK, macOS Input Monitoring permission, or an Accessibility
 permission. SDL also exposes the controller's motion sensors, but native gyro aiming, controller-specific glyphs,
