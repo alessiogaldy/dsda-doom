@@ -2,8 +2,8 @@
 //!
 //! Used by MUSIC/portmidiplayer.c to drive external MIDI hardware/synths.
 //! Unlike the codec libraries this one is inherently platform-bound: it talks
-//! to CoreMIDI on macOS and ALSA sequencer on Linux, so the backend it needs
-//! is a system library either way (as with OpenGL).
+//! to CoreMIDI on macOS, ALSA sequencer on Linux and winmm on Windows, so the
+//! backend it needs is a system library whichever it is (as with OpenGL).
 
 const std = @import("std");
 
@@ -59,6 +59,16 @@ pub fn build(
         // ALSA is the kernel's sound API on Linux; like OpenGL it comes from
         // the system rather than being vendored.
         mod.linkSystemLibrary("asound", .{ .use_pkg_config = .no });
+    } else if (t.os.tag == .windows) {
+        files.appendSlice(b.allocator, &.{
+            "porttime/ptwinmm.c",
+            "pm_win/pmwin.c",
+            "pm_win/pmwinmm.c",
+        }) catch @panic("OOM");
+        // No PMALSA equivalent to select a backend here: winmm is the only one
+        // upstream has for Windows. It ships with the OS, so unlike the codecs
+        // there is nothing to vendor.
+        mod.linkSystemLibrary("winmm", .{ .use_pkg_config = .no });
     } else {
         std.debug.panic("portmidi: unsupported target {s}", .{@tagName(t.os.tag)});
     }

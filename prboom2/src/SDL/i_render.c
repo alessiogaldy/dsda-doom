@@ -95,6 +95,20 @@ static int I_RenderThread(void *unused)
 {
   render_thread_id = SDL_ThreadID();
 
+  // Without this the thread is a pessimisation on asymmetric-core hardware.
+  // A thread created with no quality-of-service class can be scheduled onto an
+  // efficiency core, and the draw then costs several times what it does inline
+  // -- enough to become the bottleneck the main thread waits on, so overlapping
+  // is worse than not bothering. Measured on an M1 at 1920x1080, Sunder map 21,
+  // interleaved pairs: 10.76 ms a frame with the thread off, 10.64 with the
+  // thread and no priority, 9.14 with it. At 640x400, 8.82 / 8.08 / 6.69.
+  //
+  // Set from inside the thread because the priority applies to the caller, and
+  // left unchecked because failure is not worth refusing to draw over: raising
+  // priority needs privileges on some systems, and the fallback is exactly the
+  // behaviour this replaces.
+  SDL_SetThreadPriority(SDL_THREAD_PRIORITY_HIGH);
+
   for (;;)
   {
     SDL_SemWait(render_start);

@@ -295,20 +295,13 @@ static void D_Wipe(void)
     while (!tics);
 
     // elim - Enable render-to-texture for GL so "melt" is rendered at same resolution as the game scene
-    if (V_IsOpenGLMode())
-    {
-      dsda_GLLetterboxClear();
-      dsda_GLStartMeltRenderTexture();
-    }
+    R_ViewRenderer()->begin_wipe_frame();
 
     wipestart = nowtime;
     done = wipe_ScreenWipe(tics);
 
     // elim - Render texture to screen
-    if (V_IsOpenGLMode())
-    {
-      dsda_GLEndMeltRenderTexture();
-    }
+    R_ViewRenderer()->end_wipe_frame();
 
     M_Drawer();                   // menu is drawn even on top of wipes
 
@@ -455,6 +448,8 @@ static dboolean D_BuildFrame(fixed_t frac)
   static dboolean borderwillneedredraw = false;
   static gamestate_t oldgamestate = GS_DEFAULT;
   dboolean viewactive = false, isborder = false;
+  dboolean redrawborderstuff = false;
+  frame_plan_t plan;
   d_frame_t *f = &d_frame;
 
   memset(f, 0, sizeof(*f));
@@ -470,11 +465,7 @@ static dboolean D_BuildFrame(fixed_t frac)
       return true;
     }
 
-    if (V_IsOpenGLMode())
-    {
-      // Borrows the context back off the render thread, so it stays here.
-      gld_PreprocessLevel();
-    }
+    R_ViewRenderer()->preprocess_level();
   }
 
   if (!dsda_SkipMode() || !dsda_InputActive(dsda_input_use))
@@ -493,7 +484,6 @@ static dboolean D_BuildFrame(fixed_t frac)
 
   f->gamestate = gamestate;
   f->in_level = (gamestate == GS_LEVEL);
-  f->letterbox_clear = (V_IsOpenGLMode() && !exclusive_fullscreen && !nodrawers);
 
 
   // save the current screen if about to wipe
@@ -510,8 +500,6 @@ static dboolean D_BuildFrame(fixed_t frac)
     }
   }
   else { // In a level
-    dboolean redrawborderstuff;
-
     // Work out if the player view is visible, and if there is a border
     viewactive = automap_off && !inhelpscreens;
     isborder = viewactive ? R_PartialView() : (!inhelpscreens && automap_active);
@@ -534,11 +522,9 @@ static dboolean D_BuildFrame(fixed_t frac)
       borderwillneedredraw = borderwillneedredraw || automap_on;
     }
 
-    f->draw_border = (redrawborderstuff || V_IsOpenGLMode());
-
     // elim - Update viewport and scene offsets whenever the view is changed (user hits "-" or "+")
-    if (redrawborderstuff && V_IsOpenGLMode())
-      dsda_GLSetRenderViewportParams();
+    if (redrawborderstuff)
+      R_ViewRenderer()->set_viewport_params();
 
     // elim - If we go from visible status bar to invisible status bar, update affected viewport params
     if (!isborder && isborderstate)
@@ -563,7 +549,6 @@ static dboolean D_BuildFrame(fixed_t frac)
     f->automap = automap_active;
     f->st_refresh = (redrawborderstuff || BorderNeedRefresh);
     BorderNeedRefresh = false;
-    f->border_after_view = V_IsSoftwareMode();
 
     // The copy the draw phase works from.
     f->player = players[displayplayer];
@@ -583,6 +568,18 @@ static dboolean D_BuildFrame(fixed_t frac)
       R_RestoreInterpolations();
   }
 
+  // One question to the renderer, once, with everything it needs to answer.
+  memset(&plan, 0, sizeof(plan));
+  plan.in_level           = f->in_level;
+  plan.automap            = f->automap;
+  plan.border_invalidated = redrawborderstuff;
+  plan.can_letterbox      = !exclusive_fullscreen && !nodrawers;
+  R_ViewRenderer()->plan_frame(&plan);
+
+  f->letterbox_clear   = plan.letterbox_clear;
+  f->draw_border       = plan.draw_border;
+  f->border_after_view = plan.border_after_view;
+
   isborderstate      = isborder;
   oldgamestate = wipegamestate = gamestate;
 
@@ -591,10 +588,8 @@ static dboolean D_BuildFrame(fixed_t frac)
 
   // Record the 2D half here, on the thread the simulation runs on, so it reads
   // the live player at the point in the frame it always has. The draw phase
-  // replays it after the scene. The automap is excluded because am_map issues
-  // GL directly rather than through the V_ table, and those frames do not
-  // overlap anyway.
-  if (f->in_level && !f->automap && V_IsOpenGLMode())
+  // replays it after the scene.
+  if (plan.record_ui)
   {
     V_BeginRecording();
     D_DrawFrameUI(f);

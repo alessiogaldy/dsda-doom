@@ -3,4 +3,9 @@ version = "3.3.11"
 
 [tools]
 "gem:rspec" = "3.5.0"
+# Pinned rather than a range, and exactly the minimum_zig_version in
+# build.zig.zon. The build tooling and the build-time generators are all Zig, so
+# this is the whole toolchain -- but nothing here declared it, and the version
+# only appeared in build.zig.zon where no installer looks. A checkout on a fresh
+# machine therefore had no way to build at all.
 zig = "0.16.0"
