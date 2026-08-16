@@ -76,10 +76,29 @@ static void dsda_WriteGameControllerEnvironment(FILE* file, const char* name) {
           value && *value ? value : "<unset>");
 }
 
-static void dsda_WriteSteamHIDDevices(FILE* file) {
+static void dsda_WriteSteamHIDOpenProbe(
+  FILE* file,
+  const char* path,
+  int exclusive,
+  const char* mode
+) {
+  SDL_hid_device* handle;
+
+  SDL_ClearError();
+  handle = SDL_hid_open_path(path, exclusive);
+  fprintf(file, "raw_hid.open_%s: %s\n", mode, handle ? "yes" : "no");
+  fprintf(file, "raw_hid.open_%s_error: %s\n", mode,
+          handle ? "<none>" : dsda_ControllerText(SDL_GetError()));
+
+  if (handle)
+    SDL_hid_close(handle);
+}
+
+static void dsda_WriteSteamHIDDevices(FILE* file, int probe_open) {
   SDL_hid_device_info* devices;
   SDL_hid_device_info* device;
   int count = 0;
+  int probed = false;
 
   devices = SDL_hid_enumerate(DSDA_STEAM_CONTROLLER_VENDOR, 0);
   for (device = devices; device; device = device->next) {
@@ -97,6 +116,14 @@ static void dsda_WriteSteamHIDDevices(FILE* file) {
             device->usage);
     fprintf(file, "raw_hid[%d].interface: %d\n", count,
             device->interface_number);
+
+    if (probe_open && !probed && device->path && *device->path) {
+      fprintf(file, "raw_hid.probe_path: %s\n", device->path);
+      dsda_WriteSteamHIDOpenProbe(file, device->path, false, "shared");
+      dsda_WriteSteamHIDOpenProbe(file, device->path, true, "exclusive");
+      probed = true;
+    }
+
     ++count;
   }
 
@@ -139,6 +166,11 @@ static void dsda_WriteGameControllerStatus(const char* event) {
 
   SDL_GetVersion(&runtime_version);
   initialized = SDL_WasInit(0);
+  joystick_count = -1;
+  if (initialized & SDL_INIT_JOYSTICK) {
+    SDL_ClearError();
+    joystick_count = SDL_NumJoysticks();
+  }
 
   fprintf(file, "DSDA-Doom controller status\n");
   fprintf(file, "generated: %s\n", timestamp);
@@ -187,15 +219,13 @@ static void dsda_WriteGameControllerStatus(const char* event) {
   );
   fprintf(file, "\n");
 
-  dsda_WriteSteamHIDDevices(file);
+  dsda_WriteSteamHIDDevices(file, joystick_count == 0);
   fprintf(file, "\n");
 
   if (!(initialized & SDL_INIT_JOYSTICK)) {
     fprintf(file, "joystick.count: unavailable (SDL joystick subsystem is not initialized)\n");
   }
   else {
-    SDL_ClearError();
-    joystick_count = SDL_NumJoysticks();
     fprintf(file, "joystick.count: %d\n", joystick_count);
     if (joystick_count < 0)
       fprintf(file, "joystick.enumeration_error: %s\n",

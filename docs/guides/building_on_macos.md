@@ -144,7 +144,8 @@ If Steam detects the controller but DSDA-Doom receives no input:
 4. Inspect `controller-status.txt`. A working native connection reports `steam_controller.native: yes`,
    `active.touchpad.count: 2`, and `steam_controller.right_trackpad.available: yes`. Touch and release the right pad
    before sharing the file so it also contains the latest touch coordinates and motion-event count. If
-   `joystick.count` is zero, the `raw_hid` section shows whether SDL can still enumerate the physical Valve hardware.
+   `joystick.count` is zero, the `raw_hid` section shows whether SDL can enumerate the physical Valve hardware and
+   whether macOS permits shared or exclusive access to its HID path.
 
 DSDA-Doom writes `controller-status.txt` at startup, on controller connection changes, and when controller button,
 axis, or touchpad input arrives. The report includes the effective controller configuration, SDL versions and
